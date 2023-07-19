@@ -1,14 +1,35 @@
-# AWS Resource Cleanup Script
+# AWS Delete All  Script
 
 ## Introduction
 This script is designed to clean up various resources within specific AWS regions in parallel using Python threading. This script uses `boto3`, the AWS SDK for Python, and checks the version of `boto3` currently installed on your system against the latest available version.
 
 Before deleting any resources, it will create threads for each AWS region, and perform the deletion of resources in each region concurrently.
 
+## AWS CLI Setup
+Before you can use `boto3`, you need to set up authentication credentials for your AWS account using the AWS CLI. 
+
+You can install AWS CLI using pip:
+
+```bash
+pip install awscli
+```
+```bash
+aws configure
+```
+
+**`AWS Access Key ID`** and `AWS Secret Access Key`: You can find these on your AWS account. If you don't have one, you can generate it from the AWS Management Console.
+
+`Default region name`: The region to which AWS CLI directs its requests. You can set any region you want. For example, us-west-2.
+
+**`Default output format`**: The output format for AWS CLI. You can set json.
+
+
 ## Dependencies
 ```bash
 pip install boto3 requests loguru
 ```
+
+
 
 ## Usage
 To use this script, simply run it.
@@ -26,17 +47,16 @@ WARNING: Be very cautious when using this script as it deletes resources.
 Resources Deleted
 This script deletes the following AWS resources in every AWS region:
 
-- Notebook Instances
-- Elastic IP Addresses
+- Sagemaker Notebook Instances
+- EC2 Elastic IP Addresses
 - ECS Clusters
 - ECS Tasks
 - ECR Repositories
 - EC2 Instances
-- Firehose Delivery Streams
+- Kinesis Firehose Delivery Streams
 - Kinesis Data Streams
 - Redshift Clusters
 - Redshift Subnet Groups
-- Firehose Streams
 - Peering Connections
 - Load Balancers
 - Target Groups
@@ -58,6 +78,9 @@ This script deletes the following AWS resources in every AWS region:
 - Security Groups
 - Internet Gateways
 - VPCs
+- S3 buckets
+- IAM Roles
+- ECS Namespaces
 
 
 License
