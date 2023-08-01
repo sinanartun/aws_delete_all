@@ -122,6 +122,7 @@ def delete_resources(region_name):
     delete_elastic_ip(region_name)
     delete_internet_gateway(region_name)
     delete_vpc(region_name)
+    delete_all_sqs(region_name)
 
 
 def delete_namespaces():
@@ -1450,5 +1451,21 @@ def delete_ecs_clusters(region_name):
         )
         logger.info(f"Waiter finished for ECS cluster: {cluster_arn}")
 
+def delete_all_sqs(region_name):
+    sqs_client = boto3.client('sqs')
+    logger.info(f"Getting all queues")
+    response = sqs_client.list_queues()
+    
+    if 'QueueUrls' in response:
+        queue_urls = response['QueueUrls']
 
+        logger.info(f"Deleting queue start for region: {region_name}")
+        # Delete each queue
+        for queue_url in queue_urls:
+            sqs_client.delete_queue(QueueUrl=queue_url)            
+            logger.info(f"Deleting queues : {queue_url}")
+    else:
+        print("No queues found in the account.")
+    logger.info(f"Deleting queue end")
+    
 run()
