@@ -81,6 +81,7 @@ This script deletes the following AWS resources in every AWS region:
 - S3 buckets
 - IAM Roles
 - ECS Namespaces
+- delete_all_sqs ([furkanbilgin](https://github.com/furkanbilgin))
 
 
 License
