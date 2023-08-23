@@ -124,6 +124,39 @@ def delete_resources(region_name):
     delete_all_sqs(region_name)
     delete_namespaces(region_name)
     delete_redshift_serverless_namespace(region_name)
+    delete_efs_file_systems(region_name)
+
+
+def delete_efs_file_systems(region_name):
+    efs = boto3.client('efs', region_name=region_name)
+    file_systems = efs.describe_file_systems()["FileSystems"]
+
+    if not file_systems:
+        return
+
+    logger.warning(f"Namespaces Found: count({len(file_systems)})")
+    for fs in file_systems:
+        fs_id = fs['FileSystemId']
+        try:
+            efs.delete_file_system(FileSystemId=fs_id)
+            while True:
+                try:
+                    efs.describe_file_systems(FileSystemId=fs_id)
+                    time.sleep(5)
+                except efs.exceptions.FileSystemNotFound:
+                    logger.success(f"EFS file system {fs_id} deleted successfully.")
+                    break
+
+        except efs.exceptions.FileSystemInUse:
+            logger.warning(f"Cannot delete EFS file system {fs_id} as it's in use.")
+        except efs.exceptions.BadRequest:
+            logger.error(f"Bad request for EFS file system {fs_id}. Check request parameters.")
+        except efs.exceptions.InternalServerError:
+            logger.error(f"Internal server error when deleting EFS file system {fs_id}.")
+        except efs.exceptions.FileSystemNotFound:
+            logger.info(f"EFS file system {fs_id} not found. It might have been already deleted.")
+        except Exception as e:
+            logger.error(f"Error deleting EFS file system {fs_id}: {e}")
 
 
 def delete_redshift_serverless_namespace(region_name):
