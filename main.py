@@ -137,6 +137,76 @@ def delete_resources(region_name, aws_account_id):
     delete_launch_templates(region_name)
     delete_key_pairs(region_name)
     delete_amis(region_name, aws_account_id)
+    delete_all_secrets(region_name)
+    delete_rest_apis(region_name)
+    delete_http_apis(region_name)
+
+
+def delete_http_apis(region_name):
+
+    client = boto3.client('apigatewayv2', region_name=region_name)
+    apis = client.get_apis()['Items']
+
+    if not apis:
+        return
+    logger.warning(f"Api Gateway HTTP APIs Found: count({len(apis)})")
+    for api in apis:
+        api_id = api['ApiId']
+        api_name = api.get('Name', 'Unnamed API')  # Name might not always be present
+
+        try:
+            client.delete_api(ApiId=api_id)
+            logger.success(f"Successfully deleted HTTP API:{region_name}=> {api_name} ({api_id})")
+
+        except client.exceptions.NotFoundException:
+            logger.warning(f"HTTP API {region_name}=>{api_name} ({api_id}) not found. It might have been already deleted.")
+        except Exception as e:
+            logger.error(f"Error deleting HTTP API {region_name}=> {api_name} ({api_id}): {e}")
+
+
+def delete_rest_apis(region_name):
+    client = boto3.client('apigateway', region_name=region_name)
+
+    apis = client.get_rest_apis()['items']
+
+    if not apis:
+        return
+    logger.warning(f"Api Gateway REST APIs Found: count({len(apis)})")
+    for api in apis:
+        api_id = api['id']
+        api_name = api['name']
+
+        try:
+            client.delete_rest_api(restApiId=api_id)
+            logger.success(f"Successfully deleted API:{region_name}=> {api_name} ({api_id})")
+
+        except client.exceptions.ResourceNotFoundException:
+            logger.warning(f"API {api_name} ({api_id}) not found. It might have been already deleted.")
+        except Exception as e:
+            logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
+
+
+def delete_all_secrets(region_name):
+    client = boto3.client('secretsmanager', region_name=region_name)
+    paginator = client.get_paginator('list_secrets')
+
+    for page in paginator.paginate():
+        for secret in page['SecretList']:
+            secret_name = secret['Name']
+            try:
+                try:
+                    client.cancel_rotate_secret(SecretId=secret_name)
+                    logger.info(f"Rotation cancelled for secret:{region_name}=> {secret_name}")
+                except client.exceptions.ResourceNotFoundException:
+                    pass
+
+                client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+                logger.success(f"Successfully deleted secret:{region_name}=> {secret_name}")
+
+            except client.exceptions.ResourceNotFoundException:
+                logger.warning(f"Secret {secret_name} not found. It might have been already deleted.")
+            except Exception as e:
+                logger.error(f"Error deleting secret {region_name}=>{secret_name}: {e}")
 
 
 def delete_amis(region_name, aws_account_id):
@@ -150,19 +220,19 @@ def delete_amis(region_name, aws_account_id):
     logger.warning(f"EC2 AMIs Found: count({len(amis)})")
     for ami in amis:
         ami_id = ami['ImageId']
-        logger.warning(f"Deregistering AMI: {ami_id}")
+        logger.warning(f"Deregistering AMI: {region_name}=>{ami_id}")
 
         try:
             ec2.deregister_image(ImageId=ami_id)
-            logger.success(f"Successfully deregistered AMI: {ami_id}")
+            logger.success(f"Successfully deregistered AMI:{region_name}=>{ami_id}")
 
             # Optionally, delete associated snapshots
             for device in ami.get('BlockDeviceMappings', []):
                 snapshot_id = device.get('Ebs', {}).get('SnapshotId')
                 if snapshot_id:
-                    logger.info(f"Deleting snapshot: {snapshot_id} associated with AMI: {ami_id}")
+                    logger.info(f"Deleting snapshot: {snapshot_id} associated with AMI:{region_name}=>{ami_id}")
                     ec2.delete_snapshot(SnapshotId=snapshot_id)
-                    logger.success(f"Successfully deleted snapshot: {snapshot_id}")
+                    logger.success(f"Successfully deleted snapshot:{region_name}=>{snapshot_id}")
 
         except ec2.exceptions.ClientError as e:
             logger.error(f"Error deregistering AMI {ami_id}: {e}")
@@ -183,9 +253,9 @@ def delete_key_pairs(region_name):
 
         try:
             ec2.delete_key_pair(KeyName=key_name)
-            logger.success(f"Successfully deleted key pair: {key_name}")
+            logger.success(f"Successfully deleted key pair:{region_name}=>{key_name}")
         except ec2.exceptions.ClientError as e:
-            logger.error(f"Error deleting key pair {key_name}: {e}")
+            logger.error(f"Error deleting key pair {region_name}=>{key_name}: {e}")
 
 
 def delete_launch_templates(region_name):
@@ -201,13 +271,13 @@ def delete_launch_templates(region_name):
     for lt in launch_templates:
         lt_id = lt['LaunchTemplateId']
         lt_name = lt['LaunchTemplateName']
-        logger.warning(f"Deleting launch template: {lt_name} ({lt_id})")
+        logger.warning(f"Deleting launch template: {region_name}=>{lt_name} ({lt_id})")
 
         try:
             ec2.delete_launch_template(LaunchTemplateId=lt_id)
-            logger.success(f"Successfully deleted launch template: {lt_name} ({lt_id})")
+            logger.success(f"Successfully deleted launch template: {region_name}=>{lt_name} ({lt_id})")
         except ec2.exceptions.ClientError as e:
-            logger.error(f"Error deleting launch template {lt_name} ({lt_id}): {e}")
+            logger.error(f"Error deleting launch template {region_name}=>{lt_name} ({lt_id}): {e}")
 
 
 def delete_efs_file_systems(region_name):
