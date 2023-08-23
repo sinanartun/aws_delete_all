@@ -65,7 +65,7 @@ common_regions = [
 
 def run():
     logger.info("Starting to delete AWS resources")
-    ec2 = boto3.client('ec2')
+    ec2 = boto3.client('ec2', region_name='us-east-1')
     response = ec2.describe_regions()
     threads = []
 
@@ -83,7 +83,6 @@ def run():
         t.join()
     delete_s3_buckets()
     delete_all_roles()
-    delete_namespaces()
 
 
 def delete_resources(region_name):
@@ -123,10 +122,42 @@ def delete_resources(region_name):
     delete_internet_gateway(region_name)
     delete_vpc(region_name)
     delete_all_sqs(region_name)
+    delete_namespaces(region_name)
+    delete_redshift_serverless_namespace(region_name)
 
 
-def delete_namespaces():
-    client = boto3.client('servicediscovery')
+def delete_redshift_serverless_namespace(region_name):
+    client = boto3.client('redshift-serverless', region_name=region_name)
+    response = client.list_namespaces()
+    namespaces = response.get('namespaces', [])
+
+    for row in namespaces:
+        namespace_name = row.get('namespaceName')
+        status = row.get('status')
+
+        if status == 'DELETING':
+            logger.info(f"Skipping {namespace_name} as it's already in DELETING status.")
+            continue
+
+        if namespace_name is None:
+            logger.warning(f"Skipping an entry due to missing namespaceName: {row}")
+            continue
+
+        try:
+            res = client.delete_namespace(namespaceName=namespace_name)
+            res_status = res.get('status')
+
+            if res_status == 'DELETING':
+                logger.success(f"Redshift serverless Namespace Successfully Deleted: {namespace_name}")
+            else:
+                logger.warning(f"Unexpected status after deletion request for {namespace_name}: {res_status}")
+        except Exception as e:
+            logger.error(f"Error deleting Redshift serverless Namespace {namespace_name}: {e}")
+            continue
+
+
+def delete_namespaces(region_name):
+    client = boto3.client('servicediscovery', region_name=region_name)
     response = client.list_namespaces()
     if len(response["Namespaces"]) < 1:
         # logger.info("No automated backups to delete")
@@ -172,16 +203,17 @@ def delete_db_instance_automated_backups(region_name):
 def wait_for_role_deletion(iam, role_name):
     waiter_delay = 5
     max_attempts = 12
+    last_response = None
 
     for _ in range(max_attempts):
         try:
-            iam.get_role(RoleName=role_name)
+            last_response = iam.get_role(RoleName=role_name)
         except iam.exceptions.NoSuchEntityException:
             return
 
         time.sleep(waiter_delay)
 
-    raise WaiterError("Role deletion waiter timed out")
+    raise WaiterError(name="RoleDeletionWaiter", reason="Role deletion waiter timed out", last_response=last_response)
 
 
 def delete_all_roles():
@@ -1277,7 +1309,6 @@ def delete_internet_gateway(region_name):
 
     res = ec2.describe_internet_gateways()
     if len(res["InternetGateways"]) < 1:
-        # logger.info("No Internet Gateways to delete")
         return
     logger.warning(f"Internet Gateway Found: count({len(res['InternetGateways'])})")
 
@@ -1285,15 +1316,16 @@ def delete_internet_gateway(region_name):
         igw_id = igw["InternetGatewayId"]
         for att in igw["Attachments"]:
             vpc_id = att["VpcId"]
+
             try:
                 ec2.detach_internet_gateway(InternetGatewayId=igw_id, VpcId=vpc_id, DryRun=False)
-            except Exception as e:
+            except ec2.exceptions.ClientError as e:
                 logger.error(f"Error detaching Internet Gateway {igw_id} from VPC {vpc_id}: {e}")
                 raise
-        logger.warning(f"Deleting Internet Gateway: {igw_id}")
+
         try:
             ec2.delete_internet_gateway(InternetGatewayId=igw_id, DryRun=False)
-        except Exception as e:
+        except ec2.exceptions.ClientError as e:
             logger.error(f"Error deleting Internet Gateway {igw_id}: {e}")
             raise
 
@@ -1301,11 +1333,11 @@ def delete_internet_gateway(region_name):
         while True:
             try:
                 ec2.describe_internet_gateways(InternetGatewayIds=[igw_id])
-            # except ec2.exceptions.InvalidInternetGatewayID.NotFound:
-            #     logger.info(f"Internet Gateway {igw_id} deleted successfully")
-            #     break
-            except Exception as e:
+            except ec2.exceptions.InvalidInternetGatewayIDNotFound:
                 logger.success(f"Internet Gateway {igw_id} deleted successfully")
+                break
+            except ec2.exceptions.ClientError as e:
+                logger.error(f"Unexpected error while checking Internet Gateway {igw_id}: {e}")
                 break
             logger.info(f"Waiting for Internet Gateway {igw_id} to be deleted...")
             time.sleep(3)
@@ -1451,21 +1483,29 @@ def delete_ecs_clusters(region_name):
         )
         logger.info(f"Waiter finished for ECS cluster: {cluster_arn}")
 
-def delete_all_sqs(region_name):
-    sqs_client = boto3.client('sqs')
-    logger.info(f"Getting all queues")
-    response = sqs_client.list_queues()
-    
-    if 'QueueUrls' in response:
-        queue_urls = response['QueueUrls']
 
-        logger.info(f"Deleting queue start for region: {region_name}")
+def delete_all_sqs(region_name):
+    sqs_client = boto3.client('sqs', region_name=region_name)
+
+    try:
+        response = sqs_client.list_queues()
+    except Exception as e:
+        logger.error(f"Error listing SQS queues in region {region_name}: {e}")
+        return
+
+    queue_urls = response.get('QueueUrls')
+
+    if queue_urls:
+        logger.warning(f"Deleting queue start for region: {region_name}")
         # Delete each queue
         for queue_url in queue_urls:
-            sqs_client.delete_queue(QueueUrl=queue_url)            
-            logger.info(f"Deleting queues : {queue_url}")
-    else:
-        print("No queues found in the account.")
-    logger.info(f"Deleting queue end")
-    
+            try:
+                sqs_client.delete_queue(QueueUrl=queue_url)
+                logger.info(f"Deleted queue: {queue_url}")
+            except Exception as e:
+                logger.error(f"Error deleting queue {queue_url}: {e}")
+                continue
+        logger.success(f"Deleting queue end for region: {region_name}")
+
+
 run()
