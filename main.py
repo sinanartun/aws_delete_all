@@ -63,7 +63,14 @@ common_regions = [
 ]
 
 
+def get_aws_account_id():
+    sts = boto3.client('sts', region_name='us-east-1')
+    response = sts.get_caller_identity()
+    return response['Account']
+
+
 def run():
+    aws_account_id = get_aws_account_id()
     logger.info("Starting to delete AWS resources")
     ec2 = boto3.client('ec2', region_name='us-east-1')
     response = ec2.describe_regions()
@@ -75,7 +82,7 @@ def run():
         #     continue
 
         logger.success("Working on " + region_name)
-        t = threading.Thread(target=delete_resources, args=(region_name,))
+        t = threading.Thread(target=delete_resources, args=(region_name, aws_account_id,))
         threads.append(t)
         t.start()
 
@@ -85,7 +92,7 @@ def run():
     delete_all_roles()
 
 
-def delete_resources(region_name):
+def delete_resources(region_name, aws_account_id):
     delete_all_notebook_instances(region_name)
     delete_elastic_ip(region_name)
     delete_ecs_cluster(region_name)
@@ -125,6 +132,80 @@ def delete_resources(region_name):
     delete_namespaces(region_name)
     delete_redshift_serverless_namespace(region_name)
     delete_efs_file_systems(region_name)
+    delete_launch_templates(region_name)
+    delete_key_pairs(region_name)
+    delete_amis(region_name, aws_account_id)
+
+
+def delete_amis(region_name, aws_account_id):
+    ec2 = boto3.client('ec2', region_name=region_name)
+
+    response = ec2.describe_images(Owners=[aws_account_id])
+    amis = response['Images']
+
+    if not amis:
+        return
+    logger.warning(f"EC2 AMIs Found: count({len(amis)})")
+    for ami in amis:
+        ami_id = ami['ImageId']
+        logger.warning(f"Deregistering AMI: {ami_id}")
+
+        try:
+            ec2.deregister_image(ImageId=ami_id)
+            logger.success(f"Successfully deregistered AMI: {ami_id}")
+
+            # Optionally, delete associated snapshots
+            for device in ami.get('BlockDeviceMappings', []):
+                snapshot_id = device.get('Ebs', {}).get('SnapshotId')
+                if snapshot_id:
+                    logger.info(f"Deleting snapshot: {snapshot_id} associated with AMI: {ami_id}")
+                    ec2.delete_snapshot(SnapshotId=snapshot_id)
+                    logger.success(f"Successfully deleted snapshot: {snapshot_id}")
+
+        except ec2.exceptions.ClientError as e:
+            logger.error(f"Error deregistering AMI {ami_id}: {e}")
+
+
+def delete_key_pairs(region_name):
+    ec2 = boto3.client('ec2', region_name=region_name)
+
+    response = ec2.describe_key_pairs()
+    key_pairs = response['KeyPairs']
+
+    if not key_pairs:
+        return
+    logger.warning(f"EC2 Key Pairs Found: count({len(key_pairs)})")
+    for kp in key_pairs:
+        key_name = kp['KeyName']
+        logger.warning(f"Deleting key pair: {key_name}")
+
+        try:
+            ec2.delete_key_pair(KeyName=key_name)
+            logger.success(f"Successfully deleted key pair: {key_name}")
+        except ec2.exceptions.ClientError as e:
+            logger.error(f"Error deleting key pair {key_name}: {e}")
+
+
+def delete_launch_templates(region_name):
+    ec2 = boto3.client('ec2', region_name=region_name)
+
+    response = ec2.describe_launch_templates()
+    launch_templates = response['LaunchTemplates']
+
+    if not launch_templates:
+        return
+    logger.warning(f"EC2 Launch templates Found: count({len(launch_templates)})")
+
+    for lt in launch_templates:
+        lt_id = lt['LaunchTemplateId']
+        lt_name = lt['LaunchTemplateName']
+        logger.warning(f"Deleting launch template: {lt_name} ({lt_id})")
+
+        try:
+            ec2.delete_launch_template(LaunchTemplateId=lt_id)
+            logger.success(f"Successfully deleted launch template: {lt_name} ({lt_id})")
+        except ec2.exceptions.ClientError as e:
+            logger.error(f"Error deleting launch template {lt_name} ({lt_id}): {e}")
 
 
 def delete_efs_file_systems(region_name):
