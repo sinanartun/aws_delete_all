@@ -47,41 +47,101 @@ WARNING: Be very cautious when using this script as it deletes resources.
 Resources Deleted
 This script deletes the following AWS resources in every AWS region:
 
-- Sagemaker Notebook Instances
-- EC2 Elastic IP Addresses
-- ECS Clusters
-- ECS Tasks
-- ECR Repositories
-- EC2 Instances
-- Kinesis Firehose Delivery Streams
-- Kinesis Data Streams
-- Redshift Clusters
-- Redshift Subnet Groups
-- Peering Connections
-- Load Balancers
-- Target Groups
-- Lambda Functions
-- Lambda Layers
-- EFS Systems
-- DB Instances
-- RDS Systems
-- RDS Subnet Groups
-- RDS Option Groups
-- RDS Parameter Groups
-- DB Cluster Parameter Groups
-- DB Cluster Snapshots
-- DB Instance Automated Backups
-- API Gateway Endpoints
-- Route Tables
-- Network Interfaces
-- Subnets
-- Security Groups
-- Internet Gateways
-- VPCs
-- S3 buckets
-- IAM Roles
-- ECS Namespaces
+
+
+
+
+### **Amazon EC2**:
+- delete_instances
+- delete_key_pairs
+- delete_amis
+- delete_launch_templates
+- delete_efs_file_systems
+- delete_efs
+- delete_elastic_ip
+
+### **Amazon VPC**:
+
+- delete_peering_connection
+- delete_load_balancer_listener
+- delete_load_balancer
+- delete_target_groups
+- delete_route_tables
+- delete_network_interface
+- delete_sg
+- delete_sgr
+- delete_vpc
+- delete_subnets
+- delete_endpoint
+- delete_internet_gateway
+
+### **Amazon Redshift**:
+
+- delete_redshift_serverless_namespace
+- delete_all_redshift_clusters
+- delete_redshift_subnet_groups
+
+
+### **Amazon RDS**:
+
+- delete_db_instance_automated_backups
+- delete_db_cluster_snapshots
+- delete_all_rds_automated_backups
+- delete_rds_option_groups
+- delete_db_cluster_parameter_groups
+- delete_rds_parameter_groups
+- delete_rds_subnet_groups
+- delete_rds
+- delete_db_instances
+
+### **AWS Lambda**:
+
+- delete_lambda_layers
+- delete_lambda_functions
+
+### **Amazon ECS**:
+
+- delete_ecs_tasks
+- delete_ecs_cluster
+- delete_ecs_clusters
+
+### **Amazon ECR**:
+
+- delete_ecr
+
+### **Amazon S3**:
+
+- delete_s3_buckets
+- Amazon DynamoDB:
+
+### **Amazon DynamoDB**
+
+- delete_dynamodb_tables
+- delete_dynamodb_backup
+
+### **Amazon Kinesis**:
+
+- delete_all_kinesis_data_streams
+- delete_firehose_delivery_streams
+- delete_all_firehose_streams
+
+
+### **Amazon SageMaker**:
+
+- delete_all_notebook_instances
+
+
+### **Amazon SQS**:
+
 - delete_all_sqs ([furkanbilgin](https://github.com/furkanbilgin))
+
+### **Amazon IAM**:
+
+- delete_all_roles
+
+### **AWS Cloud Map** 
+- delete_namespaces
+
 
 
 License

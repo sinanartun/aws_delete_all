@@ -98,7 +98,7 @@ def delete_resources(region_name, aws_account_id):
     delete_ecs_cluster(region_name)
     delete_ecs_tasks(region_name)
     delete_ecr(region_name)
-    terminate_instances(region_name)
+    delete_instances(region_name)
     delete_firehose_delivery_streams(region_name)
     delete_all_kinesis_data_streams(region_name)
     delete_all_redshift_clusters(region_name)
@@ -756,9 +756,9 @@ def delete_dynamodb_tables(region_name):
 
     if not tables:
         return
-    logger.warning(f"DynamoDB table Found: count({len(tables['TableNames'])})")
+    logger.warning(f"DynamoDB table Found: count({len(tables)})")
     for table in tables:
-        logger.info(f"Deleting DynamoDB table: {table}")
+        logger.warning(f"Deleting DynamoDB table: {table}")
 
         try:
             dynamodb.delete_table(TableName=table)
@@ -1478,7 +1478,7 @@ def delete_internet_gateway(region_name):
             time.sleep(3)
 
 
-def terminate_instances(region_name):
+def delete_instances(region_name):
     ec2 = boto3.client('ec2', region_name=region_name)
     # Get all running instances_in the region
     instances = ec2.describe_instances(
@@ -1494,7 +1494,7 @@ def terminate_instances(region_name):
             instance_id = instance['InstanceId']
             logger.warning(f"Terminating instance {instance_id}")
             try:
-                ec2.terminate_instances(InstanceIds=[instance_id])
+                ec2.delete_instances(InstanceIds=[instance_id])
             except Exception as e:
                 logger.error(f"Error terminating instance {instance_id}: {e}")
                 raise
