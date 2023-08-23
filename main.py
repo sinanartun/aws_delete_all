@@ -105,6 +105,8 @@ def delete_resources(region_name, aws_account_id):
     delete_redshift_subnet_groups(region_name)
     delete_all_firehose_streams(region_name)
     delete_ecs_clusters(region_name)
+    delete_dynamodb_tables(region_name)
+    delete_dynamodb_backups(region_name)
     delete_peering_connection(region_name)
     delete_load_balancer(region_name)
     delete_target_groups(region_name)
@@ -747,26 +749,45 @@ def delete_s3_buckets():
             logger.error(f"Error deleting bucket {bucket['Name']}: {e}")
 
 
-def delete_all_dynamodb_tables(region_name):
+def delete_dynamodb_tables(region_name):
     dynamodb = boto3.client('dynamodb', region_name=region_name)
-    # Get all DynamoDB tables in the region
-    tables = dynamodb.list_tables()
-    print(json.dumps(tables, indent=4, sort_keys=True, default=str))
-    if len(tables['TableNames']) < 1:
-        # logger.info("No DynamoDB tables to delete")
+
+    tables = dynamodb.list_tables()['TableNames']
+
+    if not tables:
         return
     logger.warning(f"DynamoDB table Found: count({len(tables['TableNames'])})")
-    waiter = dynamodb.get_waiter('table_not_exists')
-    # Delete each DynamoDB table
-    for table_name in tables['TableNames']:
-        logger.warning(f"Deleting DynamoDB table {table_name}")
+    for table in tables:
+        logger.info(f"Deleting DynamoDB table: {table}")
+
         try:
-            dynamodb.delete_table(TableName=table_name)
-            waiter.wait(TableName=table_name)
-            logger.success(f"Successfully Deleted DynamoDB table: {table_name}")
+            dynamodb.delete_table(TableName=table)
+            logger.success(f"Successfully deleted DynamoDB table: {table}")
+        except dynamodb.exceptions.ResourceNotFoundException:
+            logger.warning(f"DynamoDB table {table} not found. It might have been already deleted.")
         except Exception as e:
-            logger.error(f"Error deleting DynamoDB table {table_name}: {e}")
-            raise
+            logger.error(f"Error deleting DynamoDB table {table}: {e}")
+
+
+def delete_dynamodb_backups(region_name):
+    dynamodb = boto3.client('dynamodb', region_name=region_name)
+
+    backups = dynamodb.list_backups()['BackupSummaries']
+
+    if not backups:
+        return
+    logger.warning(f"DynamoDB table Found: count({len(backups)})")
+    for backup in backups:
+        backup_arn = backup['BackupArn']
+        logger.info(f"Deleting DynamoDB backup: {backup_arn}")
+
+        try:
+            dynamodb.delete_backup(BackupArn=backup_arn)
+            logger.success(f"Successfully deleted DynamoDB backup: {backup_arn}")
+        except dynamodb.exceptions.ResourceNotFoundException:
+            logger.warning(f"DynamoDB backup {backup_arn} not found. It might have been already deleted.")
+        except Exception as e:
+            logger.error(f"Error deleting DynamoDB backup {backup_arn}: {e}")
 
 
 def delete_all_kinesis_data_streams(region_name):
