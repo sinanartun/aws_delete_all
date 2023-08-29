@@ -21,16 +21,12 @@ logger.add(
 
 
 def get_latest_available_version(package_name):
-    # Fetch package info from PyPI
     url = f"https://pypi.python.org/pypi/{package_name}/json"
     response = requests.get(url)
-
-    # Check the request status
     if response.status_code != 200:
         print(f"Error fetching package info: {response.status_code}")
         return None
 
-    # Parse the version from the JSON response
     data = response.json()
     latest_version = data['info']['version']
     return latest_version
@@ -45,7 +41,6 @@ if str(latest_available_version) != str(boto3.__version__):
 logger.success("Current boto3 version: " + boto3.__version__)
 logger.success("Please remember to check correct boto3 version documentation !!!")
 logger.success("Boto3 Docs " + boto3.__version__ + " documentation")
-# printing lowercase
 letters = string.ascii_lowercase
 
 
@@ -94,7 +89,6 @@ def run():
 
 def delete_resources(region_name, aws_account_id):
     delete_all_notebook_instances(region_name)
-    delete_elastic_ip(region_name)
     delete_ecs_cluster(region_name)
     delete_ecs_tasks(region_name)
     delete_ecr(region_name)
@@ -140,10 +134,62 @@ def delete_resources(region_name, aws_account_id):
     delete_all_secrets(region_name)
     delete_rest_apis(region_name)
     delete_http_apis(region_name)
+    delete_alarms(region_name)
+    delete_log_groups(region_name)
+    delete_eventbridge_rules(region_name)
+    delete_elastic_ip(region_name)
+
+
+def delete_eventbridge_rules(region_name):
+
+    events = boto3.client('events', region_name=region_name)
+    buses = events.list_event_buses()
+    bus_names = [bus['Name'] for bus in buses['EventBuses']]
+    for event_bus_name in bus_names:
+        rules = events.list_rules(EventBusName=event_bus_name)
+        rule_names = [rule['Name'] for rule in rules['Rules']]
+        if not rule_names:
+            continue
+        logger.warning(f"{len(rule_names)} rules found for event bus: {event_bus_name}.")
+        for rule_name in rule_names:
+            targets = events.list_targets_by_rule(Rule=rule_name, EventBusName=event_bus_name)
+            target_ids = [target['Id'] for target in targets['Targets']]
+            if target_ids:
+                events.remove_targets(Rule=rule_name, EventBusName=event_bus_name, Ids=target_ids)
+            events.delete_rule(Name=rule_name, EventBusName=event_bus_name)
+            logger.success(f"Deleted rule: {rule_name} for event bus: {event_bus_name}")
+
+
+def delete_log_groups(region_name):
+
+    client = boto3.client('logs', region_name=region_name)
+    log_group_names = []
+
+    paginator = client.get_paginator('describe_log_groups')
+    for page in paginator.paginate():
+        log_group_names.extend([log_group['logGroupName'] for log_group in page['logGroups']])
+
+    if not log_group_names:
+        return
+    logger.warning(f"CloudWatch Log Groups Found: count({len(log_group_names)})")
+    for log_group_name in log_group_names:
+        client.delete_log_group(logGroupName=log_group_name)
+        logger.success(f"Deleted log group: {log_group_name}")
+
+def delete_alarms(region_name):
+    client = boto3.client('cloudwatch', region_name=region_name)
+    alarms = client.describe_alarms()
+    alarm_names = [alarm['AlarmName'] for alarm in alarms['MetricAlarms']]
+
+    if not alarm_names:
+        return
+    logger.warning(f"CloudWatch Alarms Found: count({len(alarm_names)})")
+
+    client.delete_alarms(AlarmNames=alarm_names)
+    logger.success(f"Deleted {len(alarm_names)} alarms.")
 
 
 def delete_http_apis(region_name):
-
     client = boto3.client('apigatewayv2', region_name=region_name)
     apis = client.get_apis()['Items']
 
@@ -1538,9 +1584,13 @@ def delete_internet_gateway(region_name):
         while True:
             try:
                 ec2.describe_internet_gateways(InternetGatewayIds=[igw_id])
-            except ec2.exceptions.InvalidInternetGatewayIDNotFound:
-                logger.success(f"Internet Gateway {igw_id} deleted successfully")
-                break
+            except ec2.exceptions.ClientError as e:
+                if e.response['Error']['Code'] == 'InvalidInternetGatewayId.Malformed':
+                    logger.success(f"Internet Gateway {igw_id} deleted successfully")
+                    break
+                else:
+                    logger.error(f"Unexpected error while checking Internet Gateway {igw_id}: {e}")
+                    break
             except ec2.exceptions.ClientError as e:
                 logger.error(f"Unexpected error while checking Internet Gateway {igw_id}: {e}")
                 break
@@ -1564,7 +1614,7 @@ def delete_instances(region_name):
             instance_id = instance['InstanceId']
             logger.warning(f"Terminating instance {instance_id}")
             try:
-                ec2.delete_instances(InstanceIds=[instance_id])
+                ec2.terminate_instances(InstanceIds=[instance_id])
             except Exception as e:
                 logger.error(f"Error terminating instance {instance_id}: {e}")
                 raise
