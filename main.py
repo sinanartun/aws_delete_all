@@ -1,6 +1,7 @@
 import json
 import string
 import sys
+from loguru import logger
 import threading
 import time
 from datetime import datetime
@@ -9,7 +10,6 @@ import botocore
 import requests
 from botocore.exceptions import ClientError
 from botocore.exceptions import WaiterError
-from loguru import logger
 
 logger.remove()
 
@@ -66,23 +66,35 @@ def get_aws_account_id():
 
 def run():
     aws_account_id = get_aws_account_id()
+    if not aws_account_id:
+        logger.error("Failed to retrieve AWS account ID")
+        return
+
     logger.info("Starting to delete AWS resources")
+
+    # Initialize EC2 client in a specific region
     ec2 = boto3.client('ec2', region_name='us-east-1')
-    response = ec2.describe_regions()
+    try:
+        response = ec2.describe_regions()
+    except Exception as e:
+        logger.error(f"Failed to describe AWS regions: {e}")
+        return
+
     threads = []
+    for region in response['Regions']:
+        region_name = region['RegionName']
+        logger.info(f"Working on {region_name}")
 
-    for x in response['Regions']:
-        region_name = x['RegionName']
-        # if region_name not in common_regions:
-        #     continue
-
-        logger.success("Working on " + region_name)
-        t = threading.Thread(target=delete_resources, args=(region_name, aws_account_id,))
+        # Create a new thread to delete resources in the specified region
+        t = threading.Thread(target=delete_resources, args=(region_name, aws_account_id))
         threads.append(t)
         t.start()
 
+    # Wait for all threads to finish
     for t in threads:
         t.join()
+
+    # Delete S3 buckets and IAM roles
     delete_s3_buckets()
     delete_all_roles()
 
@@ -138,10 +150,12 @@ def delete_resources(region_name, aws_account_id):
     delete_log_groups(region_name)
     delete_eventbridge_rules(region_name)
     delete_elastic_ip(region_name)
+    delete_cognito_user_pools(region_name)
+    delete_cognito_identity_pools(region_name)
+    delete_sns_topics(region_name)
 
 
 def delete_eventbridge_rules(region_name):
-
     events = boto3.client('events', region_name=region_name)
     buses = events.list_event_buses()
     bus_names = [bus['Name'] for bus in buses['EventBuses']]
@@ -161,7 +175,6 @@ def delete_eventbridge_rules(region_name):
 
 
 def delete_log_groups(region_name):
-
     client = boto3.client('logs', region_name=region_name)
     log_group_names = []
 
@@ -175,6 +188,7 @@ def delete_log_groups(region_name):
     for log_group_name in log_group_names:
         client.delete_log_group(logGroupName=log_group_name)
         logger.success(f"Deleted log group: {log_group_name}")
+
 
 def delete_alarms(region_name):
     client = boto3.client('cloudwatch', region_name=region_name)
@@ -205,7 +219,8 @@ def delete_http_apis(region_name):
             logger.success(f"Successfully deleted HTTP API:{region_name}=> {api_name} ({api_id})")
 
         except client.exceptions.NotFoundException:
-            logger.warning(f"HTTP API {region_name}=>{api_name} ({api_id}) not found. It might have been already deleted.")
+            logger.warning(
+                f"HTTP API {region_name}=>{api_name} ({api_id}) not found. It might have been already deleted.")
         except Exception as e:
             logger.error(f"Error deleting HTTP API {region_name}=> {api_name} ({api_id}): {e}")
 
@@ -224,7 +239,7 @@ def delete_rest_apis(region_name):
 
         try:
             client.delete_rest_api(restApiId=api_id)
-            logger.success(f"Successfully deleted API:{region_name}=> {api_name} ({api_id})")
+            logger.info(f"Successfully deleted API:{region_name}=> {api_name} ({api_id})")
 
         except client.exceptions.ResourceNotFoundException:
             logger.warning(f"API {api_name} ({api_id}) not found. It might have been already deleted.")
@@ -1230,20 +1245,53 @@ def delete_network_interface(region_name):
             logger.error(f"Error deleting network interface: {ni_id} : {e}")
 
 
-def delete_sg(region_name):
-    ec2 = boto3.client('ec2', region_name=region_name)
-    res = ec2.describe_security_groups()
-    if len(res["SecurityGroups"]) < 1:
-        # logger.info("No SecurityGroups")
+def delete_sg(region_name: str, dry_run: bool = False) -> bool:
+    """
+    Delete non-default security groups in the specified AWS region.
+
+    Parameters:
+    - region_name (str): The AWS region where the security groups are located.
+    - dry_run (bool): If True, checks whether you have the required permissions to delete security groups without actually deleting them.
+
+    Returns:
+    - bool: Returns True if the operation is successful, False otherwise.
+    """
+    # Input validation
+    if not isinstance(region_name, str) or not region_name:
+        logger.error("Invalid region name")
         return False
 
-    for x in res["SecurityGroups"]:
-        if x["GroupName"] != "default":
-            ec2.delete_security_group(
-                GroupId=x['GroupId'],
-                DryRun=False
-            )
-            logger.success(f"SecurityGroup Deleted successfully : {x['GroupId']}")
+    # Initialize AWS EC2 client
+    try:
+        ec2 = boto3.client('ec2', region_name=region_name)
+    except Exception as e:
+        logger.error(f"Failed to initialize EC2 client: {e}")
+        return False
+
+    # Describe security groups
+    try:
+        res = ec2.describe_security_groups()
+    except Exception as e:
+        logger.error(f"Failed to describe security groups: {e}")
+        return False
+
+    # Check if there are security groups to delete
+    if not res.get("SecurityGroups"):
+        return False
+
+    # Delete non-default security groups
+    for sg in res["SecurityGroups"]:
+        if sg["GroupName"] != "default":
+            try:
+                if not dry_run:
+                    ec2.delete_security_group(GroupId=sg['GroupId'])
+                    logger.info(f"Security group {sg['GroupId']} deleted successfully")
+                else:
+                    logger.info(f"Dry run: Security group {sg['GroupId']} would be deleted")
+            except Exception as e:
+                logger.error(f"Failed to delete security group {sg['GroupId']}: {e}")
+
+    return True
 
 
 def delete_sgr(region_name):
@@ -1268,6 +1316,85 @@ def delete_sgr(region_name):
         response = ec2.describe_security_groups(GroupIds=[group_id])
         if response['SecurityGroups'][0]['IpPermissions'] or response['SecurityGroups'][0]['IpPermissionsEgress']:
             logger.critical(f"ERROR: Security group rules for {group_id} were not deleted!")
+
+
+def delete_cognito_user_pools(region_name: str):
+    client = boto3.client('cognito-idp', region_name=region_name)
+    user_pools = client.list_user_pools(MaxResults=60)['UserPools']
+
+    for pool in user_pools:
+        pool_id = pool['Id']
+        try:
+            # Retrieve current settings
+            pool_details = client.describe_user_pool(UserPoolId=pool_id)
+            current_auto_verified_attributes = pool_details['UserPool'].get('AutoVerifiedAttributes', [])
+
+            # If phone_number is in AutoVerifiedAttributes, remove it to avoid the SMS configuration requirement
+            new_auto_verified_attributes = [attr for attr in current_auto_verified_attributes if attr != 'phone_number']
+
+            # Apply updated settings
+            client.update_user_pool(
+                UserPoolId=pool_id,
+                AutoVerifiedAttributes=new_auto_verified_attributes,
+                DeletionProtection='INACTIVE'
+                # SmsConfiguration can be added here if needed
+            )
+
+            logger.info(
+                f"Updated settings and disabled deletion protection for User Pool: {pool_id} in region {region_name}")
+            client.delete_user_pool(UserPoolId=pool_id)
+            logger.success(f"Successfully deleted User Pool: {pool_id} in region {region_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete User Pool {pool_id} in region {region_name}: {e}")
+
+
+def delete_cognito_identity_pools(region_name: str):
+    """
+    Delete all Cognito Identity Pools in a specified AWS region.
+
+    Parameters:
+    - region_name (str): AWS region name.
+    """
+    client = boto3.client('cognito-identity', region_name=region_name)
+
+    # List all identity pools in the specified region
+    identity_pools = client.list_identity_pools(MaxResults=60)['IdentityPools']
+
+    # Iterate over each identity pool and delete it
+    for pool in identity_pools:
+        pool_id = pool['IdentityPoolId']
+        try:
+            client.delete_identity_pool(IdentityPoolId=pool_id)
+            logger.success(f"Successfully deleted Identity Pool: {pool_id} in region {region_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete Identity Pool {pool_id} in region {region_name}: {e}")
+
+
+def delete_sns_topics(region_name: str):
+    sns_client = boto3.client('sns', region_name=region_name)
+
+    def get_all_topics():
+        """Retrieve all SNS topics in the specified region, handling pagination."""
+        next_token = None
+        while True:
+            if next_token:
+                response = sns_client.list_topics(NextToken=next_token)
+            else:
+                response = sns_client.list_topics()
+            yield from response.get('Topics', [])
+            next_token = response.get('NextToken')
+            if not next_token:
+                break
+
+    for topic in get_all_topics():
+        topic_arn = topic['TopicArn']
+        try:
+            sns_client.delete_topic(TopicArn=topic_arn)
+            logger.info(f"Successfully deleted SNS Topic: {topic_arn} in region {region_name}")
+        except sns_client.exceptions.NotFoundException:
+            logger.warning(f"SNS Topic {topic_arn} not found in region {region_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete SNS Topic {topic_arn} in region {region_name}: {e}")
 
 
 def delete_vpc(region_name):
@@ -1555,13 +1682,39 @@ def delete_lambda_functions(region_name):
         logger.error(f"An error occurred while deleting Lambda functions in {region_name}: {e}")
 
 
-def delete_internet_gateway(region_name):
+def delete_internet_gateway(region_name, timeout=180):
     ec2 = boto3.client('ec2', region_name=region_name)
 
     res = ec2.describe_internet_gateways()
     if len(res["InternetGateways"]) < 1:
         return
     logger.warning(f"Internet Gateway Found: count({len(res['InternetGateways'])})")
+
+    def wait_for_deletion(igw_id2):
+        start_time = time.time()
+        while True:
+            elapsed_time = time.time() - start_time
+            if elapsed_time > timeout:
+                logger.error(f"Timed out waiting for Internet Gateway {igw_id2} to be deleted")
+                break
+
+            try:
+                ec2.describe_internet_gateways(InternetGatewayIds=[igw_id2])
+            except ec2.exceptions.ClientError as e2:
+                error_code = e2.response['Error']['Code']
+                if error_code in ('InvalidInternetGatewayId.Malformed', 'InvalidInternetGatewayID.NotFound'):
+                    logger.success(f"Internet Gateway {igw_id2} deleted successfully")
+                    break
+                else:
+                    logger.error(f"Unexpected error while checking Internet Gateway {igw_id2}: {e2}")
+                    break
+            except Exception as e2:  # Catch other exceptions
+                logger.error(f"Unexpected error while checking Internet Gateway {igw_id2}: {e2}")
+                break
+
+            logger.info(
+                f"Waiting for Internet Gateway {igw_id2} to be deleted... (elapsed time: {elapsed_time:.2f} seconds)")
+            time.sleep(3)
 
     for igw in res["InternetGateways"]:
         igw_id = igw["InternetGatewayId"]
@@ -1572,30 +1725,16 @@ def delete_internet_gateway(region_name):
                 ec2.detach_internet_gateway(InternetGatewayId=igw_id, VpcId=vpc_id, DryRun=False)
             except ec2.exceptions.ClientError as e:
                 logger.error(f"Error detaching Internet Gateway {igw_id} from VPC {vpc_id}: {e}")
-                raise
+                continue  # Skip to the next attachment or IGW instead of raising an exception
 
         try:
             ec2.delete_internet_gateway(InternetGatewayId=igw_id, DryRun=False)
         except ec2.exceptions.ClientError as e:
             logger.error(f"Error deleting Internet Gateway {igw_id}: {e}")
-            raise
+            continue  # Skip to the next IGW instead of raising an exception
 
-        # wait for the Internet Gateway to be deleted
-        while True:
-            try:
-                ec2.describe_internet_gateways(InternetGatewayIds=[igw_id])
-            except ec2.exceptions.ClientError as e:
-                if e.response['Error']['Code'] == 'InvalidInternetGatewayId.Malformed':
-                    logger.success(f"Internet Gateway {igw_id} deleted successfully")
-                    break
-                else:
-                    logger.error(f"Unexpected error while checking Internet Gateway {igw_id}: {e}")
-                    break
-            except ec2.exceptions.ClientError as e:
-                logger.error(f"Unexpected error while checking Internet Gateway {igw_id}: {e}")
-                break
-            logger.info(f"Waiting for Internet Gateway {igw_id} to be deleted...")
-            time.sleep(3)
+        # Wait for the Internet Gateway to be deleted
+        wait_for_deletion(igw_id)
 
 
 def delete_instances(region_name):
@@ -1763,4 +1902,5 @@ def delete_all_sqs(region_name):
         logger.success(f"Deleting queue end for region: {region_name}")
 
 
-run()
+if __name__ == "__main__":
+    run()
