@@ -142,7 +142,12 @@ This script deletes the following AWS resources in every AWS region:
 ### **AWS Cloud Map** 
 - delete_namespaces
 
+### **AWS SNS** 
+- delete_sns_topics
 
+### **AWS Cognito** 
+- delete_cognito_user_pools
+- delete_cognito_identity_pools
 
 License
 This project is licensed under the MIT License. See the LICENSE file for details.
