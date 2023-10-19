@@ -19,6 +19,8 @@ logger.add(
     level="DEBUG"
 )
 
+max_retries = 10
+
 
 def get_latest_available_version(package_name):
     url = f"https://pypi.python.org/pypi/{package_name}/json"
@@ -1330,12 +1332,12 @@ def delete_cognito_user_pools(region_name: str):
             current_auto_verified_attributes = pool_details['UserPool'].get('AutoVerifiedAttributes', [])
 
             # If phone_number is in AutoVerifiedAttributes, remove it to avoid the SMS configuration requirement
-            new_auto_verified_attributes = [attr for attr in current_auto_verified_attributes if attr != 'phone_number']
+            # new_auto_verified_attributes = [attr for attr in current_auto_verified_attributes if attr != 'phone_number']
 
             # Apply updated settings
             client.update_user_pool(
                 UserPoolId=pool_id,
-                AutoVerifiedAttributes=new_auto_verified_attributes,
+                AutoVerifiedAttributes=current_auto_verified_attributes,
                 DeletionProtection='INACTIVE'
                 # SmsConfiguration can be added here if needed
             )
@@ -1491,33 +1493,88 @@ def delete_endpoint(region_name):
 #         except WaiterError as e:
 #             logger.error(f"Error deleting RDS instance {instance_identifier}: {e}")
 
+# def delete_db_instances(region):
+#     # create a client for RDS in the specified region
+#     rds_client = boto3.client('rds', region_name=region)
+#
+#     # get a list of all RDS instances
+#     res = rds_client.describe_db_instances()
+#
+#     # filter instances that are in the 'available' state
+#     available_instances = [instance for instance in res['DBInstances'] if instance['DBInstanceStatus'] == 'available']
+#
+#     if len(available_instances) < 1:
+#         # logger.info("No RDS instance")
+#         return
+#     logger.warning(f"RDS instance Found: count({len(available_instances)})")
+#
+#     # iterate through each instance and delete it
+#     for instance in available_instances:
+#         instance_identifier = instance['DBInstanceIdentifier']
+#         rds_client.delete_db_instance(DBInstanceIdentifier=instance_identifier, SkipFinalSnapshot=True)
+#
+#         # wait for the instance to be deleted
+#         logger.warning(f"Waiting for RDS instance {instance_identifier} to be deleted...(apx 9 minutes)")
+#         try:
+#             rds_client.get_waiter('db_instance_deleted').wait(DBInstanceIdentifier=instance_identifier)
+#             logger.success(f"RDS instance {instance_identifier} deleted successfully.")
+#         except WaiterError as e:
+#             logger.error(f"Error deleting RDS instance {instance_identifier}: {e}")
 def delete_db_instances(region):
-    # create a client for RDS in the specified region
     rds_client = boto3.client('rds', region_name=region)
 
-    # get a list of all RDS instances
-    res = rds_client.describe_db_instances()
+    try:
+        # Fetching RDS instances
+        res = rds_client.describe_db_instances()
+    except ClientError as e:
+        logger.error(f"Error fetching RDS instances: {e}")
+        return
 
-    # filter instances that are in the 'available' state
+    # Filtering available instances
     available_instances = [instance for instance in res['DBInstances'] if instance['DBInstanceStatus'] == 'available']
 
-    if len(available_instances) < 1:
-        # logger.info("No RDS instance")
+    if not available_instances:
+        # logger.info("No available RDS instance found.")
         return
-    logger.warning(f"RDS instance Found: count({len(available_instances)})")
 
-    # iterate through each instance and delete it
+    logger.warning(f"Found {len(available_instances)} available RDS instance(s).")
+
     for instance in available_instances:
         instance_identifier = instance['DBInstanceIdentifier']
-        rds_client.delete_db_instance(DBInstanceIdentifier=instance_identifier, SkipFinalSnapshot=True)
 
-        # wait for the instance to be deleted
-        logger.warning(f"Waiting for RDS instance {instance_identifier} to be deleted...(apx 9 minutes)")
-        try:
-            rds_client.get_waiter('db_instance_deleted').wait(DBInstanceIdentifier=instance_identifier)
-            logger.success(f"RDS instance {instance_identifier} deleted successfully.")
-        except WaiterError as e:
-            logger.error(f"Error deleting RDS instance {instance_identifier}: {e}")
+        # Attempt to delete with retries
+        for attempt in range(max_retries):
+            try:
+                # Disabling deletion protection
+                rds_client.modify_db_instance(
+                    DBInstanceIdentifier=instance_identifier,
+                    DeletionProtection=False
+                )
+                logger.info(f"Deletion protection disabled for RDS instance {instance_identifier}.")
+
+                # Deleting instance
+                rds_client.delete_db_instance(
+                    DBInstanceIdentifier=instance_identifier,
+                    SkipFinalSnapshot=True
+                )
+                logger.info(f"Initiated deletion for RDS instance {instance_identifier}.")
+
+                # Waiting for deletion to complete
+                rds_client.get_waiter('db_instance_deleted').wait(DBInstanceIdentifier=instance_identifier)
+                logger.success(f"RDS instance {instance_identifier} deleted successfully.")
+                break  # Break out of the retry loop if deletion is successful
+
+            except ClientError as e:
+                if "DeletionProtection" in str(e):
+                    logger.warning(
+                        f"Deletion protection still active for RDS instance {instance_identifier}. Retrying...")
+                elif "InvalidParameterCombination" in str(e) and attempt < max_retries - 1:
+                    logger.warning(
+                        f"Temporary issue deleting RDS instance {instance_identifier}. Retrying in 60 seconds...")
+                    time.sleep(60)  # Waiting before retrying
+                else:
+                    logger.error(f"Error deleting RDS instance {instance_identifier}: {e}")
+                    break  # Break out of the retry loop if a non-retryable error occurs
 
 
 def delete_all_notebook_instances(region_name):
