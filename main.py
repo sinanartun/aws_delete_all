@@ -249,27 +249,54 @@ def delete_rest_apis(region_name):
             logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
 
 
-def delete_all_secrets(region_name):
+def delete_all_secrets(region_name: str) -> None:
     client = boto3.client('secretsmanager', region_name=region_name)
     paginator = client.get_paginator('list_secrets')
 
     for page in paginator.paginate():
         for secret in page['SecretList']:
             secret_name = secret['Name']
+
+            # Check if the secret is a replica
             try:
-                try:
-                    client.cancel_rotate_secret(SecretId=secret_name)
-                    logger.info(f"Rotation cancelled for secret:{region_name}=> {secret_name}")
-                except client.exceptions.ResourceNotFoundException:
-                    pass
+                secret_details = client.describe_secret(SecretId=secret_name)
+                primary_region = secret_details.get('PrimaryRegion', region_name)
 
-                client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                logger.success(f"Successfully deleted secret:{region_name}=> {secret_name}")
-
-            except client.exceptions.ResourceNotFoundException:
-                logger.warning(f"Secret {secret_name} not found. It might have been already deleted.")
+                if primary_region != region_name:
+                    # logger.info(f"Secret {secret_name} is a replica in region {region_name}. Primary region is {primary_region}. Skipping replication deletion.")
+                    continue  # Skip further processing for replica secrets in this region
             except Exception as e:
-                logger.error(f"Error deleting secret {region_name}=>{secret_name}: {e}")
+                logger.error(f"Error retrieving details for secret {region_name} => {secret_name}: {e}")
+                continue
+
+            # Attempt to delete replication for primary secrets
+            try:
+                client.delete_resource_policy(SecretId=secret_name)
+                logger.info(f"Replication deleted for secret: {region_name} => {secret_name}")
+            except client.exceptions.ResourceNotFoundException:
+                logger.warning(f"Replication policy not found for secret {secret_name} in {region_name}.")
+            except Exception as e:
+                logger.error(f"Error deleting replication for secret {region_name} => {secret_name}: {e}")
+                continue
+
+            # Attempt to cancel rotation if it's enabled
+            try:
+                client.cancel_rotate_secret(SecretId=secret_name)
+                logger.info(f"Rotation cancelled for secret: {region_name} => {secret_name}")
+            except client.exceptions.ResourceNotFoundException:
+                pass
+            except Exception as e:
+                logger.error(f"Error cancelling rotation for secret {region_name} => {secret_name}: {e}")
+                continue
+
+            # Proceed to delete the secret
+            try:
+                client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+                logger.info(f"Successfully deleted secret: {region_name} => {secret_name}")
+            except client.exceptions.ResourceNotFoundException:
+                logger.warning(f"Secret {secret_name} not found in {region_name}. It might have been already deleted.")
+            except Exception as e:
+                logger.error(f"Error deleting secret {region_name} => {secret_name}: {e}")
 
 
 def delete_amis(region_name, aws_account_id):
@@ -408,16 +435,33 @@ def delete_redshift_serverless_namespace(region_name):
 def delete_namespaces(region_name):
     client = boto3.client('servicediscovery', region_name=region_name)
     response = client.list_namespaces()
-    if len(response["Namespaces"]) < 1:
-        # logger.info("No automated backups to delete")
-        return
-    logger.warning(f"Namespaces Found: count({len(response['Namespaces'])})")
-    for namespace in response["Namespaces"]:
-        try:
 
-            client.delete_namespace(Id=namespace['Id'])
+    if len(response["Namespaces"]) < 1:
+        # logger.info("No namespaces found.")
+        return
+
+    logger.warning(f"Namespaces Found: count({len(response['Namespaces'])})")
+
+    for namespace in response["Namespaces"]:
+        namespace_id = namespace['Id']
+        logger.info(f"Processing namespace: {namespace_id}")
+
+        # First, delete all services within the namespace
+        services = client.list_services(Filters=[{'Name': 'NAMESPACE_ID', 'Values': [namespace_id]}])
+        for service in services['Services']:
+            try:
+                client.delete_service(Id=service['Id'])
+                logger.info(f"Deleted service {service['Id']} in namespace {namespace_id}")
+            except Exception as e:
+                logger.error(f"Error deleting service {service['Id']} in namespace {namespace_id}: {e}")
+                raise
+
+        # Then, delete the namespace
+        try:
+            client.delete_namespace(Id=namespace_id)
+            logger.info(f"Deleted namespace {namespace_id}")
         except Exception as e:
-            logger.error(f"Error deleting Namespace {namespace['Id']}: {e}")
+            logger.error(f"Error deleting namespace {namespace_id}: {e}")
             raise
 
     logger.success("All Namespaces deleted successfully!")
