@@ -8,8 +8,7 @@ from datetime import datetime
 import boto3
 import botocore
 import requests
-from botocore.exceptions import ClientError
-from botocore.exceptions import WaiterError
+from botocore.exceptions import ClientError, BotoCoreError, WaiterError
 
 logger.remove()
 
@@ -257,46 +256,31 @@ def delete_all_secrets(region_name: str) -> None:
         for secret in page['SecretList']:
             secret_name = secret['Name']
 
-            # Check if the secret is a replica
             try:
                 secret_details = client.describe_secret(SecretId=secret_name)
                 primary_region = secret_details.get('PrimaryRegion', region_name)
 
+                # Skip if the secret is a replica in the current region
                 if primary_region != region_name:
-                    # logger.info(f"Secret {secret_name} is a replica in region {region_name}. Primary region is {primary_region}. Skipping replication deletion.")
-                    continue  # Skip further processing for replica secrets in this region
-            except Exception as e:
-                logger.error(f"Error retrieving details for secret {region_name} => {secret_name}: {e}")
-                continue
+                    logger.info(f"Secret {secret_name} is a replica in region {region_name}. Skipping deletion.")
+                    continue
 
-            # Attempt to delete replication for primary secrets
-            try:
-                client.delete_resource_policy(SecretId=secret_name)
-                logger.info(f"Replication deleted for secret: {region_name} => {secret_name}")
-            except client.exceptions.ResourceNotFoundException:
-                logger.warning(f"Replication policy not found for secret {secret_name} in {region_name}.")
-            except Exception as e:
-                logger.error(f"Error deleting replication for secret {region_name} => {secret_name}: {e}")
-                continue
+                # Delete replicas if any
+                replicas = secret_details.get('ReplicationStatus', [])
+                for replica in replicas:
+                    replica_region = replica['Region']
+                    replica_client = boto3.client('secretsmanager', region_name=replica_region)
+                    replica_client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+                    logger.info(f"Replica deleted for secret: {secret_name} in region {replica_region}")
 
-            # Attempt to cancel rotation if it's enabled
-            try:
-                client.cancel_rotate_secret(SecretId=secret_name)
-                logger.info(f"Rotation cancelled for secret: {region_name} => {secret_name}")
-            except client.exceptions.ResourceNotFoundException:
-                pass
-            except Exception as e:
-                logger.error(f"Error cancelling rotation for secret {region_name} => {secret_name}: {e}")
-                continue
-
-            # Proceed to delete the secret
-            try:
+                # Delete the primary secret
                 client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                logger.info(f"Successfully deleted secret: {region_name} => {secret_name}")
+                logger.info(f"Successfully deleted primary secret: {region_name} => {secret_name}")
+
             except client.exceptions.ResourceNotFoundException:
                 logger.warning(f"Secret {secret_name} not found in {region_name}. It might have been already deleted.")
             except Exception as e:
-                logger.error(f"Error deleting secret {region_name} => {secret_name}: {e}")
+                logger.error(f"Error processing secret {region_name} => {secret_name}: {e}")
 
 
 def delete_amis(region_name, aws_account_id):
@@ -1366,32 +1350,37 @@ def delete_sgr(region_name):
 
 def delete_cognito_user_pools(region_name: str):
     client = boto3.client('cognito-idp', region_name=region_name)
-    user_pools = client.list_user_pools(MaxResults=60)['UserPools']
+
+    try:
+        user_pools = client.list_user_pools(MaxResults=60)['UserPools']
+    except ClientError as e:
+        logger.error(f"Error listing user pools in region {region_name}: {e}")
+        return
 
     for pool in user_pools:
         pool_id = pool['Id']
         try:
-            # Retrieve current settings
             pool_details = client.describe_user_pool(UserPoolId=pool_id)
-            current_auto_verified_attributes = pool_details['UserPool'].get('AutoVerifiedAttributes', [])
+            auto_verified_attributes = pool_details['UserPool'].get('AutoVerifiedAttributes', [])
 
-            # If phone_number is in AutoVerifiedAttributes, remove it to avoid the SMS configuration requirement
-            # new_auto_verified_attributes = [attr for attr in current_auto_verified_attributes if attr != 'phone_number']
+            # Remove phone_number from AutoVerifiedAttributes if present
+            if 'phone_number' in auto_verified_attributes:
+                auto_verified_attributes.remove('phone_number')
 
-            # Apply updated settings
             client.update_user_pool(
                 UserPoolId=pool_id,
-                AutoVerifiedAttributes=current_auto_verified_attributes,
+                AutoVerifiedAttributes=auto_verified_attributes,
                 DeletionProtection='INACTIVE'
-                # SmsConfiguration can be added here if needed
             )
+            logger.info(f"Updated settings for User Pool: {pool_id}")
 
-            logger.info(
-                f"Updated settings and disabled deletion protection for User Pool: {pool_id} in region {region_name}")
             client.delete_user_pool(UserPoolId=pool_id)
-            logger.success(f"Successfully deleted User Pool: {pool_id} in region {region_name}")
-        except Exception as e:
+            logger.success(f"Successfully deleted User Pool: {pool_id}")
+
+        except ClientError as e:
             logger.error(f"Failed to delete User Pool {pool_id} in region {region_name}: {e}")
+        except BotoCoreError as e:
+            logger.error(f"BotoCore Error while processing User Pool {pool_id}: {e}")
 
 
 def delete_cognito_identity_pools(region_name: str):
