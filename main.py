@@ -179,9 +179,16 @@ def delete_eventbridge_rules(region_name):
             targets = events.list_targets_by_rule(Rule=rule_name, EventBusName=event_bus_name)
             target_ids = [target['Id'] for target in targets['Targets']]
             if target_ids:
-                events.remove_targets(Rule=rule_name, EventBusName=event_bus_name, Ids=target_ids)
-            events.delete_rule(Name=rule_name, EventBusName=event_bus_name)
-            logger.success(f"Deleted rule: {rule_name} for event bus: {event_bus_name}")
+                try:
+                    events.remove_targets(Rule=rule_name, EventBusName=event_bus_name, Ids=target_ids)
+                except Exception as e:
+                    logger.info(f"Info: removing targets for rule {rule_name} on event bus {event_bus_name}: {e}")
+                    continue
+            try:
+                events.delete_rule(Name=rule_name, EventBusName=event_bus_name)
+                logger.success(f"Deleted rule: {rule_name} for event bus: {event_bus_name}")
+            except Exception as e:
+                logger.info(f"Error deleting rule {rule_name} on event bus {event_bus_name}: {e}")
 
 
 def delete_log_groups(region_name):
@@ -438,33 +445,41 @@ def delete_efs_file_systems(region_name):
 
 def delete_redshift_serverless_namespace(region_name):
     client = boto3.client('redshift-serverless', region_name=region_name)
-    response = client.list_namespaces()
-    namespaces = response.get('namespaces', [])
-
-    for row in namespaces:
-        namespace_name = row.get('namespaceName')
-        status = row.get('status')
-
-        if status == 'DELETING':
-            logger.info(f"Skipping {namespace_name} as it's already in DELETING status.")
-            continue
-
-        if namespace_name is None:
-            logger.warning(f"Skipping an entry due to missing namespaceName: {row}")
-            continue
-
+    
+    if 'list_namespaces' in dir(client):
         try:
-            res = client.delete_namespace(namespaceName=namespace_name)
-            res_status = res.get('status')
-
-            if res_status == 'DELETING':
-                logger.success(f"Redshift serverless Namespace Successfully Deleted: {namespace_name}")
-            else:
-                logger.warning(f"Unexpected status after deletion request for {namespace_name}: {res_status}")
+            response = client.list_namespaces()
         except Exception as e:
-            logger.error(f"Error deleting Redshift serverless Namespace {namespace_name}: {e}")
-            continue
+            logger.info(f"Debug: listing namespaces:{region_name} {e}")
+            return
 
+        namespaces = response.get('namespaces', [])
+
+        for row in namespaces:
+            namespace_name = row.get('namespaceName')
+            status = row.get('status')
+
+            if status == 'DELETING':
+                logger.info(f"Skipping {namespace_name} as it's already in DELETING status.")
+                continue
+
+            if namespace_name is None:
+                logger.warning(f"Skipping an entry due to missing namespaceName: {row}")
+                continue
+
+            try:
+                res = client.delete_namespace(namespaceName=namespace_name)
+                res_status = res.get('status')
+
+                if res_status == 'DELETING':
+                    logger.success(f"Redshift serverless Namespace Successfully Deleted: {namespace_name}")
+                else:
+                    logger.warning(f"Unexpected status after deletion request for {namespace_name}: {res_status}")
+            except Exception as e:
+                logger.error(f"Error deleting Redshift serverless Namespace {namespace_name}: {e}")
+                continue
+    else:
+        logger.error("The method list_namespaces does not exist for the redshift-serverless client.")
 
 def delete_namespaces(region_name):
     client = boto3.client('servicediscovery', region_name=region_name)
