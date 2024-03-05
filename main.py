@@ -98,7 +98,11 @@ def run():
 
     # Delete S3 buckets and IAM roles
     delete_s3_buckets()
-    delete_all_roles()
+    # delete_all_roles() // bunu iptal ettim cunku beklenmedik hatalarsa sebep oluyor.
+
+
+
+
 
 
 def delete_resources(region_name, aws_account_id):
@@ -155,6 +159,10 @@ def delete_resources(region_name, aws_account_id):
     delete_cognito_user_pools(region_name)
     delete_cognito_identity_pools(region_name)
     delete_sns_topics(region_name)
+
+
+
+
 
 
 def delete_eventbridge_rules(region_name):
@@ -249,6 +257,7 @@ def delete_rest_apis(region_name):
             logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
 
 
+
 def delete_all_secrets(region_name):
     client = boto3.client('secretsmanager', region_name=region_name)
     paginator = client.get_paginator('list_secrets')
@@ -257,19 +266,71 @@ def delete_all_secrets(region_name):
         for secret in page['SecretList']:
             secret_name = secret['Name']
             try:
-                try:
-                    client.cancel_rotate_secret(SecretId=secret_name)
-                    logger.info(f"Rotation cancelled for secret:{region_name}=> {secret_name}")
-                except client.exceptions.ResourceNotFoundException:
-                    pass
+                response = client.describe_secret(SecretId=secret_name)
+                replication_status_list = response.get('ReplicationStatus')
+                
+                if replication_status_list is not None:
+                    for replication_status in replication_status_list:
+                        region = replication_status.get('Region')
+                        status = replication_status.get('Status')
+                        
+                        if status == 'InSync':
+                            logger.info(f"Replica found for secret {region_name} => {secret_name} in region {region}. Removing replica before deletion.")
+                            client.remove_regions_from_replication(SecretId=secret_name, RemoveReplicaRegions=[region])
+                            logger.info(f"Replica removed successfully for secret {region_name} => {secret_name} in region {region}.")
+                        else:
+                            logger.warning(f"Failed to delete secret {region_name} => {secret_name} in region {region}. Replicas still exist.")
 
-                client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                logger.success(f"Successfully deleted secret:{region_name}=> {secret_name}")
+                    # After removing replicas, describe the secret again to get updated replication status
+                    response = client.describe_secret(SecretId=secret_name)
+                    replication_status_list = response.get('ReplicationStatus')
+                    if replication_status_list is not None:
+                        all_replicas_removed = all(replication_status.get('Status') != 'InSync' for replication_status in replication_status_list)
+                    else:
+                        all_replicas_removed = True
 
+                    if all_replicas_removed:
+                        logger.info(f"All replicas of secret {region_name} => {secret_name} have been successfully removed. Deleting the secret.")
+                        client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+                        logger.success(f"Successfully deleted secret: {region_name} => {secret_name}")
+                    else:
+                        logger.warning(f"Failed to delete secret {region_name} => {secret_name}. Replicas still exist.")
+                else:
+                    # logger.warning(f"No replication status found for secret {region_name} => {secret_name}.")
+                    # If there are no replicas, try deleting the secret directly
+                    client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+                    logger.success(f"Successfully deleted secret: {region_name} => {secret_name}")
+                    
             except client.exceptions.ResourceNotFoundException:
                 logger.warning(f"Secret {secret_name} not found. It might have been already deleted.")
             except Exception as e:
-                logger.error(f"Error deleting secret {region_name}=>{secret_name}: {e}")
+                logger.error(f"Error deleting secret {region_name} => {secret_name}: {e}")
+
+
+
+
+
+# def delete_all_secrets(region_name):
+#     client = boto3.client('secretsmanager', region_name=region_name)
+#     paginator = client.get_paginator('list_secrets')
+
+#     for page in paginator.paginate():
+#         for secret in page['SecretList']:
+#             secret_name = secret['Name']
+#             try:
+#                 try:
+#                     client.cancel_rotate_secret(SecretId=secret_name)
+#                     logger.info(f"Rotation cancelled for secret:{region_name}=> {secret_name}")
+#                 except client.exceptions.ResourceNotFoundException:
+#                     pass
+
+#                 client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+#                 logger.success(f"Successfully deleted secret:{region_name}=> {secret_name}")
+
+#             except client.exceptions.ResourceNotFoundException:
+#                 logger.warning(f"Secret {secret_name} not found. It might have been already deleted.")
+#             except Exception as e:
+#                 logger.error(f"Error deleting secret {region_name}=>{secret_name}: {e}")
 
 
 def delete_amis(region_name, aws_account_id):
@@ -1318,6 +1379,39 @@ def delete_sgr(region_name):
         response = ec2.describe_security_groups(GroupIds=[group_id])
         if response['SecurityGroups'][0]['IpPermissions'] or response['SecurityGroups'][0]['IpPermissionsEgress']:
             logger.critical(f"ERROR: Security group rules for {group_id} were not deleted!")
+
+
+
+def get_cognito_role_name(region_name):
+    """
+    Retrieve the IAM role name used by Amazon Cognito to send SMS messages.
+    """
+    iam_client = boto3.client('iam', region_name=region_name)
+    response = iam_client.list_roles()
+    for role in response['Roles']:
+        if 'AmazonCognito' in role['RoleName']:
+            return role['RoleName']
+    return None
+
+def get_sns_caller_arn(region_name):
+    """
+    Retrieve the ARN of the IAM role used by Amazon Cognito to send SMS messages.
+    """
+    iam_client = boto3.client('iam', region_name=region_name)
+    role_name = get_cognito_role_name(region_name)
+    if role_name:
+        response = iam_client.get_role(RoleName=role_name)
+        return response['Role']['Arn']
+    else:
+        return None
+
+def get_sns_region():
+    """
+    Retrieve the AWS region where your SNS topic is located.
+    """
+    return boto3.session.Session().region_name
+
+
 
 
 def delete_cognito_user_pools(region_name: str):
