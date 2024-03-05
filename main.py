@@ -450,7 +450,7 @@ def delete_redshift_serverless_namespace(region_name):
         try:
             response = client.list_namespaces()
         except Exception as e:
-            logger.info(f"Debug: listing namespaces:{region_name} {e}")
+            logger.info(f"Debug:{region_name}: Redshift serverless listing namespaces is not supported in this region.")
             return
 
         namespaces = response.get('namespaces', [])
