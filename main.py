@@ -1651,8 +1651,8 @@ def delete_db_instances(region):
     for instance in available_instances:
         instance_identifier = instance['DBInstanceIdentifier']
 
-        # Attempt to delete with retries
-        for attempt in range(max_retries):
+        # Check if deletion protection is enabled
+        if instance['DeletionProtection']:
             try:
                 # Disabling deletion protection
                 rds_client.modify_db_instance(
@@ -1660,7 +1660,13 @@ def delete_db_instances(region):
                     DeletionProtection=False
                 )
                 logger.info(f"Deletion protection disabled for RDS instance {instance_identifier}.")
+            except ClientError as e:
+                logger.error(f"Error disabling deletion protection for RDS instance {instance_identifier}: {e}")
+                continue
 
+        # Attempt to delete with retries
+        for attempt in range(max_retries):
+            try:
                 # Deleting instance
                 rds_client.delete_db_instance(
                     DBInstanceIdentifier=instance_identifier,
@@ -1674,10 +1680,7 @@ def delete_db_instances(region):
                 break  # Break out of the retry loop if deletion is successful
 
             except ClientError as e:
-                if "DeletionProtection" in str(e):
-                    logger.warning(
-                        f"Deletion protection still active for RDS instance {instance_identifier}. Retrying...")
-                elif "InvalidParameterCombination" in str(e) and attempt < max_retries - 1:
+                if "InvalidParameterCombination" in str(e) and attempt < max_retries - 1:
                     logger.warning(
                         f"Temporary issue deleting RDS instance {instance_identifier}. Retrying in 60 seconds...")
                     time.sleep(60)  # Waiting before retrying
