@@ -1,0 +1,2 @@
+[console_scripts]
+aws-delete-all = main:main

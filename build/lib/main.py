@@ -50,7 +50,6 @@ class AwsDeleteAll:
         logger.success("Current boto3 version: " + boto3.__version__)
         logger.success("Please remember to check correct boto3 version documentation !!!")
         logger.success("Boto3 Docs " + boto3.__version__ + " documentation")
-        logger.success(f"https://boto3.amazonaws.com/v1/documentation/api/{boto3.__version__}/index.html")
 
     def pt(self):
         date_time = datetime.fromtimestamp(int(time.time()))

@@ -1,0 +1,10 @@
+LICENSE
+README.md
+main.py
+setup.py
+aws_delete_all.egg-info/PKG-INFO
+aws_delete_all.egg-info/SOURCES.txt
+aws_delete_all.egg-info/dependency_links.txt
+aws_delete_all.egg-info/entry_points.txt
+aws_delete_all.egg-info/requires.txt
+aws_delete_all.egg-info/top_level.txt
