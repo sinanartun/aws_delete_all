@@ -85,8 +85,10 @@ def run():
     threads = []
     for region in response['Regions']:
         region_name = region['RegionName']
+        
+        if region_name not in common_regions:
+            continue
         logger.info(f"Working on {region_name}")
-
         # Create a new thread to delete resources in the specified region
         t = threading.Thread(target=delete_resources, args=(region_name, aws_account_id))
         threads.append(t)
@@ -1629,6 +1631,9 @@ def delete_endpoint(region_name):
 #             logger.success(f"RDS instance {instance_identifier} deleted successfully.")
 #         except WaiterError as e:
 #             logger.error(f"Error deleting RDS instance {instance_identifier}: {e}")
+
+
+
 def delete_db_instances(region):
     rds_client = boto3.client('rds', region_name=region)
 
@@ -1679,8 +1684,33 @@ def delete_db_instances(region):
                 logger.success(f"RDS instance {instance_identifier} deleted successfully.")
                 break  # Break out of the retry loop if deletion is successful
 
-            except ClientError as e:
-                if "InvalidParameterCombination" in str(e) and attempt < max_retries - 1:
+            except botocore.exceptions.ClientError as e:
+                if "InvalidDBClusterStateFault" in str(e):
+                    try:
+                        if instance['Engine'] == 'aurora-mysql':
+                            # For Aurora, create a new DB cluster from the read replica
+                            rds_client.create_db_cluster(
+                                DBClusterIdentifier=instance_identifier + '-standalone',
+                                SnapshotIdentifier=instance['DBClusterSnapshotIdentifier'],
+                                Engine='aurora-mysql',
+                                # Add any other necessary parameters
+                            )
+                            logger.info(f"Created standalone DB cluster from read replica {instance_identifier}.")
+                        else:
+                            # For other engines, promote the read replica
+                            rds_client.promote_read_replica(
+                                DBInstanceIdentifier=instance_identifier,
+                                BackupRetentionPeriod=0
+                            )
+                            logger.info(f"Promoted read replica {instance_identifier} to standalone DB instance.")
+                    except botocore.exceptions.ClientError as e:
+                        logger.error(f"Error promoting read replica {instance_identifier}: {e}")
+                        break
+
+                    rds_client.get_waiter('db_instance_available').wait(DBInstanceIdentifier=instance_identifier)
+                    logger.success("Promotion of DB Instance: " + instance_identifier + " is successful")
+                    continue  # Continue to the next iteration of the loop to attempt deletion again
+                elif "InvalidParameterCombination" in str(e) and attempt < max_retries - 1:
                     logger.warning(
                         f"Temporary issue deleting RDS instance {instance_identifier}. Retrying in 60 seconds...")
                     time.sleep(60)  # Waiting before retrying
@@ -1724,6 +1754,7 @@ def delete_rds(region_name):
     rds = boto3.client('rds', region_name=region_name)
     waiter1 = rds.get_waiter('db_cluster_available')
     waiter2 = rds.get_waiter('db_cluster_deleted')
+    waiter3 = rds.get_waiter('db_instance_deleted')
 
     res = rds.describe_db_clusters(IncludeShared=False)
     dbc_count = len(res["DBClusters"])
@@ -1749,7 +1780,6 @@ def delete_rds(region_name):
             )
             logger.info("Updating DBCluster DeletionProtection to False Finished.")
 
-    waiter3 = rds.get_waiter('db_instance_deleted')
     res2 = rds.describe_db_instances()
     dbi_count = len(res2["DBInstances"])
     if dbi_count > 0:
@@ -1773,6 +1803,21 @@ def delete_rds(region_name):
             except rds.exceptions.InvalidDBInstanceStateFault:
                 logger.info("DB Instance: " + x["DBInstanceIdentifier"] + " is already being deleted, continuing...")
                 continue
+            except botocore.exceptions.ClientError as e:
+                if "InvalidDBInstanceState" in str(e):
+                    logger.info("Promoting DB Instance: " + x["DBInstanceIdentifier"])
+                    rds.promote_read_replica(
+                        DBInstanceIdentifier=x["DBInstanceIdentifier"],
+                        BackupRetentionPeriod=0
+                    )
+                    waiter3.wait(
+                        DBInstanceIdentifier=x["DBInstanceIdentifier"],
+                        WaiterConfig={
+                            'Delay': 1,
+                            'MaxAttempts': 1200
+                        }
+                    )
+                    logger.success("Promotion of DB Instance: " + x["DBInstanceIdentifier"] + " is successful")
 
     if dbc_count > 0:
         for x in res["DBClusters"]:
