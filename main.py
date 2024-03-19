@@ -86,8 +86,8 @@ def run():
     for region in response['Regions']:
         region_name = region['RegionName']
         
-        if region_name not in common_regions:
-            continue
+        # if region_name not in common_regions:
+        #     continue
         logger.info(f"Working on {region_name}")
         # Create a new thread to delete resources in the specified region
         t = threading.Thread(target=delete_resources, args=(region_name, aws_account_id))
