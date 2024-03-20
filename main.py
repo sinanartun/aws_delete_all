@@ -21,6 +21,7 @@ class AwsDeleteAll:
         )
         self.common_regions = ['us-east-1', 'us-west-1', 'us-west-2', 'eu-west-1', 'eu-central-1', 'eu-north-1']
         self.max_retries = 10
+        self.waiter_delay = 5
         self.aws_account_id = self.get_aws_account_id()
         if not self.aws_account_id:
             logger.error("Failed to retrieve AWS account ID. Please check your AWS credentials and try again.")
@@ -886,17 +887,16 @@ class AwsDeleteAll:
 
 
     def wait_for_role_deletion(self, iam, role_name):
-        waiter_delay = 5
-        max_attempts = 12
+
         last_response = None
 
-        for _ in range(max_attempts):
+        for _ in range(self.max_retries):
             try:
                 last_response = iam.get_role(RoleName=role_name)
             except iam.exceptions.NoSuchEntityException:
                 return
 
-            time.sleep(waiter_delay)
+            time.sleep(self.waiter_delay)
 
         raise WaiterError(name="RoleDeletionWaiter", reason="Role deletion waiter timed out", last_response=last_response)
 
@@ -1792,7 +1792,7 @@ class AwsDeleteAll:
         # Delete all VPCs in the region
         for vpc_id in vpc_ids:
             attempts = 0
-            while attempts < self.max_attempts:
+            while attempts < self.max_retries:
                 try:
                     ec2.delete_vpc(VpcId=vpc_id)
                 except ec2.exceptions.ClientError as e:
@@ -1810,7 +1810,7 @@ class AwsDeleteAll:
                     else:
                         logger.warning(f"Error describing VPC {vpc_id} in {region_name}: {e}")
                 attempts += 1
-            if attempts == self.max_attempts:
+            if attempts == self.max_retries:
                 logger.critical(f"Could not delete VPC {vpc_id} in region {region_name} after {attempts} attempts.")
 
 
