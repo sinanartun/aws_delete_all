@@ -1,3 +1,5 @@
+
+![PyPI version](https://img.shields.io/pypi/v/aws-delete-all)
 # AWS Delete All  Script
 
 ## Introduction
