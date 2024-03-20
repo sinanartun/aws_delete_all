@@ -1,6 +1,5 @@
 .idea
 venv
-setup.py
 dist/*
 build/*
 aws_delete_all.egg-info
