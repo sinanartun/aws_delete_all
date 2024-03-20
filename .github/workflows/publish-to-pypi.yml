@@ -22,16 +22,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install setuptools wheel twine bumpversion
+        pip install setuptools wheel twine
     - name: Configure Git
       run: |
         git config --global user.email "sinanartun@gmail.com"
         git config --global user.name "Sinan Artun"
-    - name: Bump version and commit
-      run: |
-        bumpversion patch
-        git commit -m "Bump version [skip ci]"
-        git push origin HEAD:main
     - name: Build and publish
       env:
         TWINE_USERNAME: __token__
