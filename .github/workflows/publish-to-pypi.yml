@@ -13,10 +13,11 @@ jobs:
     if: github.actor != 'github-actions[bot]' && github.actor != 'github-actions'
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
-
+      uses: actions/checkout@v2
+      with:
+        token: ${{ secrets.PAT }}
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v2
       with:
         python-version: '3.x'
     - name: Install dependencies
