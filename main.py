@@ -157,11 +157,359 @@ class AwsDeleteAll:
         self.delete_cognito_user_pools(region_name)
         self.delete_cognito_identity_pools(region_name)
         self.delete_sns_topics(region_name)
+        self.delete_cloudfront_distributions(region_name)
+        self.delete_step_functions_state_machines(region_name)
+        self.delete_cloudformation_stacks(region_name)
+        self.delete_codebuild_projects(region_name)
+        self.delete_route53_hosted_zones_and_record_sets(region_name)
+        self.delete_cloudwatch_alarms_and_dashboards(region_name)
+        self.delete_codecommit_repositories(region_name)
+        self.delete_codepipeline_pipelines(region_name)
+        self.delete_codedeploy_applications_and_deployment_groups(region_name)
+        self.delete_elasticbeanstalk_applications_and_environments(region_name)
+        self.delete_quicksight_dashboards_and_analyses(region_name)
+        self.delete_emr_clusters(region_name)
+        self.delete_athena_saved_queries(region_name)
+        self.delete_glue_jobs_workflows_crawlers(region_name)
+        self.delete_api_gateways(region_name)
+        self.delete_config_recorders_and_delivery_channels(region_name)
+        
 
 
 
+    def delete_config_recorders_and_delivery_channels(self, region_name):
+        client = boto3.client('config', region_name=region_name)
+
+        # List all configuration recorders
+        recorders = client.describe_configuration_recorders()
+        if len(recorders['ConfigurationRecorders']) > 0:
+            logger.warning(f"Config Recorders Found: count({len(recorders['ConfigurationRecorders'])})")
+            for recorder in recorders['ConfigurationRecorders']:
+                # Stop the configuration recorder
+                client.stop_configuration_recorder(ConfigurationRecorderName=recorder['name'])
+                # Delete the configuration recorder
+                client.delete_configuration_recorder(ConfigurationRecorderName=recorder['name'])
+
+        # List all delivery channels
+        channels = client.describe_delivery_channels()
+        if len(channels['DeliveryChannels']) > 0:
+            logger.warning(f"Delivery Channels Found: count({len(channels['DeliveryChannels'])})")
+            for channel in channels['DeliveryChannels']:
+                # Delete the delivery channel
+                client.delete_delivery_channel(DeliveryChannelName=channel['name'])
+
+        logger.success("All Config configuration recorders and delivery channels have been deleted.")
+
+    def delete_api_gateways(self, region_name):
+        client = boto3.client('apigateway', region_name=region_name)
+
+        # List all Rest APIs
+        rest_apis = client.get_rest_apis()
+
+        if len(rest_apis['items']) > 0:
+            logger.warning(f"API Gateways Found: count({len(rest_apis['items'])})")
+        else:
+            return
+
+        for api in rest_apis['items']:
+            # Delete the Rest API
+            client.delete_rest_api(restApiId=api['id'])
+
+        logger.success("All API Gateways have been deleted.")
+
+    def delete_glue_jobs_workflows_crawlers(self, region_name):
+        client = boto3.client('glue', region_name=region_name)
+
+        # List all jobs
+        jobs = client.get_jobs()
+        if len(jobs['Jobs']) > 0:
+            logger.warning(f"Glue Jobs Found: count({len(jobs['Jobs'])})")
+            for job in jobs['Jobs']:
+                # Delete the job
+                client.delete_job(JobName=job['Name'])
+
+        # List all workflows
+        workflows = client.list_workflows()
+        if len(workflows['Workflows']) > 0:
+            logger.warning(f"Glue Workflows Found: count({len(workflows['Workflows'])})")
+            for workflow in workflows['Workflows']:
+                # Delete the workflow
+                client.delete_workflow(Name=workflow)
+
+        # List all crawlers
+        crawlers = client.get_crawlers()
+        if len(crawlers['Crawlers']) > 0:
+            logger.warning(f"Glue Crawlers Found: count({len(crawlers['Crawlers'])})")
+            for crawler in crawlers['Crawlers']:
+                # Delete the crawler
+                client.delete_crawler(Name=crawler['Name'])
+
+        logger.success("All Glue jobs, workflows, and crawlers have been deleted.")
+
+    def delete_athena_saved_queries(self, region_name):
+        client = boto3.client('athena', region_name=region_name)
+
+        # List all saved queries
+        saved_queries = client.list_named_queries()
+        if len(saved_queries['NamedQueryIds']) > 0:
+            logger.warning(f"Athena Saved Queries Found: count({len(saved_queries['NamedQueryIds'])})")
+            for query_id in saved_queries['NamedQueryIds']:
+                # Delete the saved query
+                client.delete_named_query(NamedQueryId=query_id)
+
+        logger.success("All Athena saved queries have been deleted.")
+
+    def delete_emr_clusters(self, region_name):
+        client = boto3.client('emr', region_name=region_name)
+
+        # List all clusters
+        clusters = client.list_clusters()
+        if len(clusters['Clusters']) > 0:
+            logger.warning(f"EMR Clusters Found: count({len(clusters['Clusters'])})")
+            for cluster in clusters['Clusters']:
+                # Terminate the cluster
+                client.terminate_job_flows(JobFlowIds=[cluster['Id']])
+
+        logger.success("All EMR clusters have been deleted.")
+
+    def delete_quicksight_dashboards_and_analyses(self, region_name):
+        client = boto3.client('quicksight', region_name=region_name)
+
+        # List all dashboards
+        dashboards = client.list_dashboards(AwsAccountId='your-account-id')
+        if len(dashboards['DashboardSummaryList']) > 0:
+            logger.warning(f"QuickSight Dashboards Found: count({len(dashboards['DashboardSummaryList'])})")
+            for dashboard in dashboards['DashboardSummaryList']:
+                # Delete the dashboard
+                client.delete_dashboard(AwsAccountId='your-account-id', DashboardId=dashboard['DashboardId'])
+
+        # List all analyses
+        analyses = client.list_analyses(AwsAccountId='your-account-id')
+        if len(analyses['AnalysisSummaryList']) > 0:
+            logger.warning(f"QuickSight Analyses Found: count({len(analyses['AnalysisSummaryList'])})")
+            for analysis in analyses['AnalysisSummaryList']:
+                # Delete the analysis
+                client.delete_analysis(AwsAccountId='your-account-id', AnalysisId=analysis['AnalysisId'])
+
+        logger.success("All QuickSight dashboards and analyses have been deleted.")       
 
 
+
+    def delete_elasticbeanstalk_applications_and_environments(self, region_name):
+        client = boto3.client('elasticbeanstalk', region_name=region_name)
+
+        # List all applications
+        applications = client.describe_applications()
+
+        if len(applications['Applications']) > 0:
+            logger.warning(f"Elastic Beanstalk Applications Found: count({len(applications['Applications'])})")
+        else:
+            return
+
+        for application in applications['Applications']:
+            # List all environments
+            environments = client.describe_environments(ApplicationName=application['ApplicationName'])
+            for environment in environments['Environments']:
+                # Terminate the environment
+                client.terminate_environment(EnvironmentId=environment['EnvironmentId'])
+
+            # Delete the application
+            client.delete_application(ApplicationName=application['ApplicationName'])
+
+        logger.success("All Elastic Beanstalk applications and environments have been deleted.")
+
+
+    def delete_codepipeline_pipelines(self, region_name):
+        client = boto3.client('codepipeline', region_name=region_name)
+
+        # List all pipelines
+        pipelines = client.list_pipelines()
+
+        if len(pipelines['pipelines']) > 0:
+            logger.warning(f"CodePipeline Pipelines Found: count({len(pipelines['pipelines'])})")
+        else:
+            return
+
+        for pipeline in pipelines['pipelines']:
+            # Delete the pipeline
+            client.delete_pipeline(name=pipeline['name'])
+
+        logger.success("All CodePipeline pipelines have been deleted.")
+
+    def delete_codedeploy_applications_and_deployment_groups(self, region_name):
+        client = boto3.client('codedeploy', region_name=region_name)
+
+        # List all applications
+        applications = client.list_applications()
+
+        if len(applications['applications']) > 0:
+            logger.warning(f"CodeDeploy Applications Found: count({len(applications['applications'])})")
+        else:
+            return
+
+        for application_name in applications['applications']:
+            # List all deployment groups
+            deployment_groups = client.list_deployment_groups(applicationName=application_name)
+            for deployment_group_name in deployment_groups['deploymentGroups']:
+                # Delete the deployment group
+                client.delete_deployment_group(applicationName=application_name, deploymentGroupName=deployment_group_name)
+
+            # Delete the application
+            client.delete_application(applicationName=application_name)
+
+        logger.success("All CodeDeploy applications and deployment groups have been deleted.")    
+
+
+    def delete_codecommit_repositories(self, region_name):
+        client = boto3.client('codecommit', region_name=region_name)
+
+        # List all repositories
+        repositories = client.list_repositories()
+
+        if len(repositories['repositories']) > 0:
+            logger.warning(f"CodeCommit Repositories Found: count({len(repositories['repositories'])})")
+        else:
+            return
+
+        for repository in repositories['repositories']:
+            # Delete the repository
+            client.delete_repository(repositoryName=repository['repositoryName'])
+
+        logger.success("All CodeCommit repositories have been deleted.")
+
+
+    def delete_cloudwatch_alarms_and_dashboards(self, region_name):
+        client = boto3.client('cloudwatch', region_name=region_name)
+
+        # List all alarms
+        alarms = client.describe_alarms()
+        if len(alarms['MetricAlarms']) > 0:
+            logger.warning(f"CloudWatch Alarms Found: count({len(alarms['MetricAlarms'])})")
+            for alarm in alarms['MetricAlarms']:
+                # Delete the alarm
+                client.delete_alarms(AlarmNames=[alarm['AlarmName']])
+            logger.success("All CloudWatch alarms have been deleted.")
+
+        # List all dashboards
+        dashboards = client.list_dashboards()
+        if len(dashboards['DashboardEntries']) > 0:
+            logger.warning(f"CloudWatch Dashboards Found: count({len(dashboards['DashboardEntries'])})")
+            for dashboard in dashboards['DashboardEntries']:
+                # Delete the dashboard
+                client.delete_dashboards(DashboardNames=[dashboard['DashboardName']])
+
+            logger.success("All CloudWatch dashboards have been deleted.")
+
+
+    def delete_route53_hosted_zones_and_record_sets(self, region_name):
+        client = boto3.client('route53', region_name=region_name)
+
+        # List all hosted zones
+        hosted_zones = client.list_hosted_zones()
+
+        if len(hosted_zones['HostedZones']) > 0:
+            logger.warning(f"Route53 Hosted Zones Found: count({len(hosted_zones['HostedZones'])})")
+        else:
+            return
+
+        for hosted_zone in hosted_zones['HostedZones']:
+            # Delete all record sets
+            record_sets = client.list_resource_record_sets(HostedZoneId=hosted_zone['Id'])
+            for record_set in record_sets['ResourceRecordSets']:
+                client.change_resource_record_sets(
+                    HostedZoneId=hosted_zone['Id'],
+                    ChangeBatch={
+                        'Changes': [
+                            {
+                                'Action': 'DELETE',
+                                'ResourceRecordSet': record_set
+                            },
+                        ]
+                    }
+                )
+
+            # Delete the hosted zone
+            client.delete_hosted_zone(Id=hosted_zone['Id'])
+
+        logger.success("All Route53 hosted zones and record sets have been deleted.")    
+
+    def delete_codebuild_projects(self, region_name):
+        client = boto3.client('codebuild', region_name=region_name)
+
+        # List all projects
+        projects = client.list_projects()
+
+        if len(projects['projects']) > 0:
+            logger.warning(f"CodeBuild Projects Found: count({len(projects['projects'])})")
+        else:
+            return
+
+        for project_name in projects['projects']:
+            # Delete the project
+            client.delete_project(name=project_name)
+
+        logger.success("All CodeBuild projects have been deleted.")
+
+    def delete_cloudformation_stacks(self, region_name):
+        client = boto3.client('cloudformation', region_name=region_name)
+
+        # List all stacks
+        stacks = client.list_stacks(StackStatusFilter=['CREATE_COMPLETE', 'ROLLBACK_COMPLETE', 'UPDATE_COMPLETE'])
+
+
+        if len(stacks['StackSummaries']) > 0:
+            logger.warning(f"CloudFormation Stacks Found: count({len(stacks['StackSummaries'])})")
+
+        else:
+            return
+
+        for stack in stacks['StackSummaries']:
+            # Delete the stack
+            client.delete_stack(StackName=stack['StackName'])
+
+        logger.success("All CloudFormation stacks have been deleted.")
+
+    def delete_step_functions_state_machines(self, region_name):
+        client = boto3.client('stepfunctions', region_name=region_name)
+
+        # List all state machines
+        state_machines = client.list_state_machines()
+        if len(state_machines['stateMachines']) > 0:
+            logger.warning(f"Step Functions state machines found: count({len(state_machines['stateMachines'])})")
+        else:
+            return    
+
+        for state_machine in state_machines['stateMachines']:
+            # Delete the state machine
+            client.delete_state_machine(stateMachineArn=state_machine['stateMachineArn'])
+
+        logger.success("All Step Functions state machines have been deleted.")
+
+    def delete_cloudfront_distributions(self, region_name):
+        client = boto3.client('cloudfront', region_name=region_name)
+
+        # List all distributions
+        distributions = client.list_distributions()
+
+        if distributions['DistributionList']['Quantity'] > 0:
+            logger.warning(f"CloudFront Distributions Found: count({distributions['DistributionList']['Quantity']})")
+            for distribution in distributions['DistributionList']['Items']:
+                # Get distribution config
+                config = client.get_distribution_config(Id=distribution['Id'])
+
+                # Create a new config without the ETag element
+                new_config = {key: value for key, value in config.items() if key != 'ETag'}
+
+                # Disable the distribution
+                new_config['DistributionConfig']['Enabled'] = False
+
+                # Update the distribution
+                client.update_distribution(Id=distribution['Id'], IfMatch=config['ETag'], DistributionConfig=new_config)
+
+                # Delete the distribution
+                client.delete_distribution(Id=distribution['Id'], IfMatch=config['ETag'])
+
+            logger.success("All CloudFront distributions have been deleted.")
 
     def delete_eventbridge_rules(self, region_name):
         events = boto3.client('events', region_name=region_name)
