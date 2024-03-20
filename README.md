@@ -1,5 +1,7 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dw/aws-delete-all)
 ![PyPI version](https://img.shields.io/pypi/v/aws-delete-all)
+![GitHub License](https://img.shields.io/github/license/sinanartun/aws_delete_all)
+
 
 # AWS Delete All  Script
 
