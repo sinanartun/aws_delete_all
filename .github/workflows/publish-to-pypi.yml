@@ -4,15 +4,19 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.bumpversion.cfg'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]' && github.actor != 'github-actions'
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
+
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
         python-version: '3.x'
     - name: Install dependencies
