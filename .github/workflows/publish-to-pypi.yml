@@ -10,7 +10,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]' && github.actor != 'github-actions'
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v2
@@ -31,6 +30,7 @@ jobs:
     - name: Bump version and commit
       run: |
         bumpversion patch
+        git commit -m "Bump version [skip ci]"
         git push origin HEAD:main
     - name: Build and publish
       env:
