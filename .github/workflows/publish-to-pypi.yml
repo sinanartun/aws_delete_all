@@ -31,7 +31,7 @@ jobs:
     - name: Bump version and commit
       run: |
         bumpversion patch
-        git push
+        git push origin HEAD:main
     - name: Build and publish
       env:
         TWINE_USERNAME: __token__
