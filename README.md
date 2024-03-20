@@ -150,7 +150,7 @@ This script deletes the following AWS resources in every AWS region:
 
 ### **Amazon IAM**:
 
-- delete_all_roles
+- delete_all_roles(disabled)
 
 ### **AWS Cloud Map** 
 - delete_namespaces
@@ -161,6 +161,15 @@ This script deletes the following AWS resources in every AWS region:
 ### **AWS Cognito** 
 - delete_cognito_user_pools
 - delete_cognito_identity_pools
+
+### **AWS Athena** 
+- delete_athena_saved_queries
+
+### **AWS API Gateway** 
+- delete_api_gateways
+
+### **AWS Config** 
+- delete_config_recorders_and_delivery_channels
 
 License
 This project is licensed under the MIT License. See the LICENSE file for details.
