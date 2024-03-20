@@ -15,6 +15,7 @@ This script is designed to clean up various resources within specific AWS region
 
 Before deleting any resources, it will create threads for each AWS region, and perform the deletion of resources in each region concurrently.
 
+![Demo](images/demo.gif)
 
 ## How to Use in AWS CloudShell
 AWS CloudShell is a browser-based shell that you can use to manage your AWS resources. Here's how you can use this script in AWS CloudShell:
