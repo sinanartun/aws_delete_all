@@ -173,7 +173,7 @@ class AwsDeleteAll:
         self.delete_glue_jobs_workflows_crawlers(region_name)
         self.delete_api_gateways(region_name)
         self.delete_config_recorders_and_delivery_channels(region_name)
-        
+
 
 
 
@@ -198,7 +198,7 @@ class AwsDeleteAll:
                 # Delete the delivery channel
                 client.delete_delivery_channel(DeliveryChannelName=channel['name'])
 
-        logger.success("All Config configuration recorders and delivery channels have been deleted.")
+            logger.success("All Config configuration recorders and delivery channels have been deleted.")
 
     def delete_api_gateways(self, region_name):
         client = boto3.client('apigateway', region_name=region_name)
@@ -227,6 +227,7 @@ class AwsDeleteAll:
             for job in jobs['Jobs']:
                 # Delete the job
                 client.delete_job(JobName=job['Name'])
+            logger.success("All Glue Jobs have been deleted.")    
 
         # List all workflows
         workflows = client.list_workflows()
@@ -235,6 +236,7 @@ class AwsDeleteAll:
             for workflow in workflows['Workflows']:
                 # Delete the workflow
                 client.delete_workflow(Name=workflow)
+            logger.success("All Glue Workflows have been deleted.")    
 
         # List all crawlers
         crawlers = client.get_crawlers()
@@ -244,7 +246,7 @@ class AwsDeleteAll:
                 # Delete the crawler
                 client.delete_crawler(Name=crawler['Name'])
 
-        logger.success("All Glue jobs, workflows, and crawlers have been deleted.")
+            logger.success("All Glue jobs crawlers have been deleted.")
 
     def delete_athena_saved_queries(self, region_name):
         client = boto3.client('athena', region_name=region_name)
@@ -257,7 +259,7 @@ class AwsDeleteAll:
                 # Delete the saved query
                 client.delete_named_query(NamedQueryId=query_id)
 
-        logger.success("All Athena saved queries have been deleted.")
+            logger.success("All Athena saved queries have been deleted.")
 
     def delete_emr_clusters(self, region_name):
         client = boto3.client('emr', region_name=region_name)
@@ -270,28 +272,40 @@ class AwsDeleteAll:
                 # Terminate the cluster
                 client.terminate_job_flows(JobFlowIds=[cluster['Id']])
 
-        logger.success("All EMR clusters have been deleted.")
+            logger.success("All EMR clusters have been deleted.")
+
+
 
     def delete_quicksight_dashboards_and_analyses(self, region_name):
         client = boto3.client('quicksight', region_name=region_name)
 
-        # List all dashboards
-        dashboards = client.list_dashboards(AwsAccountId='your-account-id')
-        if len(dashboards['DashboardSummaryList']) > 0:
-            logger.warning(f"QuickSight Dashboards Found: count({len(dashboards['DashboardSummaryList'])})")
-            for dashboard in dashboards['DashboardSummaryList']:
-                # Delete the dashboard
-                client.delete_dashboard(AwsAccountId='your-account-id', DashboardId=dashboard['DashboardId'])
+        try:
+            # List all dashboards
+            dashboards = client.list_dashboards(AwsAccountId=self.aws_account_id)
+            if len(dashboards['DashboardSummaryList']) > 0:
+                logger.warning(f"QuickSight Dashboards Found: count({len(dashboards['DashboardSummaryList'])})")
+                for dashboard in dashboards['DashboardSummaryList']:
+                    # Delete the dashboard
+                    client.delete_dashboard(AwsAccountId=self.aws_account_id, DashboardId=dashboard['DashboardId'])
 
-        # List all analyses
-        analyses = client.list_analyses(AwsAccountId='your-account-id')
-        if len(analyses['AnalysisSummaryList']) > 0:
-            logger.warning(f"QuickSight Analyses Found: count({len(analyses['AnalysisSummaryList'])})")
-            for analysis in analyses['AnalysisSummaryList']:
-                # Delete the analysis
-                client.delete_analysis(AwsAccountId='your-account-id', AnalysisId=analysis['AnalysisId'])
+            # List all analyses
+            analyses = client.list_analyses(AwsAccountId=self.aws_account_id)
+            if len(analyses['AnalysisSummaryList']) > 0:
+                logger.warning(f"QuickSight Analyses Found: count({len(analyses['AnalysisSummaryList'])})")
+                for analysis in analyses['AnalysisSummaryList']:
+                    # Delete the analysis
+                    client.delete_analysis(AwsAccountId=self.aws_account_id, AnalysisId=analysis['AnalysisId'])
 
-        logger.success("All QuickSight dashboards and analyses have been deleted.")       
+            logger.success("All QuickSight dashboards and analyses have been deleted.")
+
+        except client.exceptions.QuickSightUserNotFoundException:
+            pass
+        except botocore.exceptions.EndpointConnectionError:
+            pass
+        except client.exceptions.UnsupportedUserEditionException:
+            pass
+        except Exception as e:  # Generic exception
+            pass
 
 
 
