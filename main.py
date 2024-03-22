@@ -36,13 +36,15 @@ class AwsDeleteAll:
                 data = json.loads(response.read())
                 latest_version = data['info']['version']
                 return latest_version
-        except urllib.error.HTTPError as e:
-            print(f"Error fetching package info: {e.code}")
+        except Exception as e:
+            logger.error(f"Error fetching package info: {str(e)}")
             return None
-
+        
     def check_boto3_version(self):
         latest_available_version = self.get_latest_available_version('boto3')
-        if str(latest_available_version) != str(boto3.__version__):
+        if latest_available_version is None:
+            logger.error("Could not check for latest version of boto3.")
+        elif str(latest_available_version) != str(boto3.__version__):
             logger.warning(f"Latest available version of boto3 is: {latest_available_version}")
             logger.warning(f"you can upgrade boto3 using this command:")
             logger.warning(f"pip install --upgrade boto3")
