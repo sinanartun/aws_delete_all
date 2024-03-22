@@ -302,6 +302,14 @@ class AwsDeleteAll:
 
                 logger.success("All QuickSight AnalysisSummaryList have been deleted.")
 
+            datasets = client.list_data_sets(AwsAccountId=self.aws_account_id)
+            if len(datasets['DataSetSummaries']) > 0:
+                logger.warning(f"QuickSight Datasets Found: count({len(datasets['DataSetSummaries'])})")
+                for dataset in datasets['DataSetSummaries']:
+                    # Delete the dataset
+                    client.delete_data_set(AwsAccountId=self.aws_account_id, DataSetId=dataset['DataSetId'])
+                logger.success("All QuickSight datasets have been deleted.")        
+
         except client.exceptions.QuickSightUserNotFoundException:
             pass
         except botocore.exceptions.EndpointConnectionError:
