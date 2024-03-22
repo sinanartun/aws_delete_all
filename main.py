@@ -290,6 +290,7 @@ class AwsDeleteAll:
                 for dashboard in dashboards['DashboardSummaryList']:
                     # Delete the dashboard
                     client.delete_dashboard(AwsAccountId=self.aws_account_id, DashboardId=dashboard['DashboardId'])
+                logger.success("All QuickSight DashboardSummaryList have been deleted.")    
 
             # List all analyses
             analyses = client.list_analyses(AwsAccountId=self.aws_account_id)
@@ -299,7 +300,7 @@ class AwsDeleteAll:
                     # Delete the analysis
                     client.delete_analysis(AwsAccountId=self.aws_account_id, AnalysisId=analysis['AnalysisId'])
 
-            logger.success("All QuickSight dashboards and analyses have been deleted.")
+                logger.success("All QuickSight AnalysisSummaryList have been deleted.")
 
         except client.exceptions.QuickSightUserNotFoundException:
             pass
