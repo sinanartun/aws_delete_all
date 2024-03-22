@@ -303,12 +303,19 @@ class AwsDeleteAll:
                 logger.success("All QuickSight AnalysisSummaryList have been deleted.")
 
             datasets = client.list_data_sets(AwsAccountId=self.aws_account_id)
+          
             if len(datasets['DataSetSummaries']) > 0:
                 logger.warning(f"QuickSight Datasets Found: count({len(datasets['DataSetSummaries'])})")
                 for dataset in datasets['DataSetSummaries']:
-                    # Delete the dataset
-                    client.delete_data_set(AwsAccountId=self.aws_account_id, DataSetId=dataset['DataSetId'])
-                logger.success("All QuickSight datasets have been deleted.")        
+                    print(dataset)
+                    # Check if the dataset is a SPICE dataset
+                    if dataset['ImportMode'] == 'SPICE':
+                        # Delete the SPICE dataset
+                        client.delete_data_set(AwsAccountId=self.aws_account_id, DataSetId=dataset['DataSetId'])
+                        logger.success(f"QuickSight SPICE dataset {dataset['Name']} have been deleted.")
+                    elif dataset['ImportMode'] == 'DIRECT_QUERY':
+                        client.delete_data_set(AwsAccountId=self.aws_account_id, DataSetId=dataset['DataSetId'])
+                        logger.success(f"QuickSight DIRECT_QUERY dataset {dataset['Name']} have been deleted.")
 
         except client.exceptions.QuickSightUserNotFoundException:
             pass
