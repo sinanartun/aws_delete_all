@@ -258,24 +258,16 @@ def delete_all_secrets(region_name: str) -> None:
 
             try:
                 secret_details = client.describe_secret(SecretId=secret_name)
-                primary_region = secret_details.get('PrimaryRegion', region_name)
+                primary_region = secret_details.get('PrimaryRegion', None)
 
-                # Skip if the secret is a replica in the current region
-                if primary_region != region_name:
-                    logger.info(f"Secret {secret_name} is a replica in region {region_name}. Skipping deletion.")
+                # Skip deletion if the secret is a replica and not in its primary region
+                if primary_region and primary_region != region_name:
+                    logger.info(f"Skipping deletion for replica secret: {secret_name} in region {region_name}. Primary region is {primary_region}.")
                     continue
 
-                # Delete replicas if any
-                replicas = secret_details.get('ReplicationStatus', [])
-                for replica in replicas:
-                    replica_region = replica['Region']
-                    replica_client = boto3.client('secretsmanager', region_name=replica_region)
-                    replica_client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                    logger.info(f"Replica deleted for secret: {secret_name} in region {replica_region}")
-
-                # Delete the primary secret
+                # Delete the secret (whether primary or standalone)
                 client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                logger.info(f"Successfully deleted primary secret: {region_name} => {secret_name}")
+                logger.info(f"Successfully deleted secret: {region_name} => {secret_name}")
 
             except client.exceptions.ResourceNotFoundException:
                 logger.warning(f"Secret {secret_name} not found in {region_name}. It might have been already deleted.")
