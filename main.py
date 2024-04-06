@@ -79,260 +79,260 @@ class AwsDeleteAll:
         try:
             response = ec2.describe_regions()
         except Exception as e:
-            logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
+            logger.error(f"Failed to retrieve AWS account ID: {e}")
 
 
-def delete_all_secrets(region_name: str) -> None:
-    client = boto3.client('secretsmanager', region_name=region_name)
-    paginator = client.get_paginator('list_secrets')
+    def delete_all_secrets(region_name: str) -> None:
+        client = boto3.client('secretsmanager', region_name=region_name)
+        paginator = client.get_paginator('list_secrets')
 
-    for page in paginator.paginate():
-        for secret in page['SecretList']:
-            secret_name = secret['Name']
+        for page in paginator.paginate():
+            for secret in page['SecretList']:
+                secret_name = secret['Name']
 
-            try:
-                secret_details = client.describe_secret(SecretId=secret_name)
-                primary_region = secret_details.get('PrimaryRegion', None)
-
-                # Skip deletion if the secret is a replica and not in its primary region
-                if primary_region and primary_region != region_name:
-                    logger.info(f"Skipping deletion for replica secret: {secret_name} in region {region_name}. Primary region is {primary_region}.")
-                    continue
-
-                # Delete the secret (whether primary or standalone)
-                client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                logger.info(f"Successfully deleted secret: {region_name} => {secret_name}")
-
-            except client.exceptions.ResourceNotFoundException:
-                logger.warning(f"Secret {secret_name} not found in {region_name}. It might have been already deleted.")
-            except Exception as e:
-                logger.error(f"Error processing secret {region_name} => {secret_name}: {e}")
-
-
-def delete_amis(region_name, aws_account_id):
-    ec2 = boto3.client('ec2', region_name=region_name)
-
-    response = ec2.describe_images(Owners=[aws_account_id])
-    amis = response['Images']
-
-    if not amis:
-        return
-    logger.warning(f"EC2 AMIs Found: count({len(amis)})")
-    for ami in amis:
-        ami_id = ami['ImageId']
-        logger.warning(f"Deregistering AMI: {region_name}=>{ami_id}")
-
-        try:
-            ec2.deregister_image(ImageId=ami_id)
-            logger.success(f"Successfully deregistered AMI:{region_name}=>{ami_id}")
-
-            # Optionally, delete associated snapshots
-            for device in ami.get('BlockDeviceMappings', []):
-                snapshot_id = device.get('Ebs', {}).get('SnapshotId')
-                if snapshot_id:
-                    logger.info(f"Deleting snapshot: {snapshot_id} associated with AMI:{region_name}=>{ami_id}")
-                    ec2.delete_snapshot(SnapshotId=snapshot_id)
-                    logger.success(f"Successfully deleted snapshot:{region_name}=>{snapshot_id}")
-
-        except ec2.exceptions.ClientError as e:
-            logger.error(f"Error deregistering AMI {ami_id}: {e}")
-
-
-def delete_key_pairs(region_name):
-    ec2 = boto3.client('ec2', region_name=region_name)
-
-    response = ec2.describe_key_pairs()
-    key_pairs = response['KeyPairs']
-
-    if not key_pairs:
-        return
-    logger.warning(f"EC2 Key Pairs Found: count({len(key_pairs)})")
-    for kp in key_pairs:
-        key_name = kp['KeyName']
-        logger.warning(f"Deleting key pair: {key_name}")
-
-        try:
-            ec2.delete_key_pair(KeyName=key_name)
-            logger.success(f"Successfully deleted key pair:{region_name}=>{key_name}")
-        except ec2.exceptions.ClientError as e:
-            logger.error(f"Error deleting key pair {region_name}=>{key_name}: {e}")
-
-
-def delete_launch_templates(region_name):
-    ec2 = boto3.client('ec2', region_name=region_name)
-
-    response = ec2.describe_launch_templates()
-    launch_templates = response['LaunchTemplates']
-
-    if not launch_templates:
-        return
-    logger.warning(f"EC2 Launch templates Found: count({len(launch_templates)})")
-
-    for lt in launch_templates:
-        lt_id = lt['LaunchTemplateId']
-        lt_name = lt['LaunchTemplateName']
-        logger.warning(f"Deleting launch template: {region_name}=>{lt_name} ({lt_id})")
-
-        try:
-            ec2.delete_launch_template(LaunchTemplateId=lt_id)
-            logger.success(f"Successfully deleted launch template: {region_name}=>{lt_name} ({lt_id})")
-        except ec2.exceptions.ClientError as e:
-            logger.error(f"Error deleting launch template {region_name}=>{lt_name} ({lt_id}): {e}")
-
-
-def delete_efs_file_systems(region_name):
-    efs = boto3.client('efs', region_name=region_name)
-    file_systems = efs.describe_file_systems()["FileSystems"]
-
-    if not file_systems:
-        return
-
-    logger.warning(f"Namespaces Found: count({len(file_systems)})")
-    for fs in file_systems:
-        fs_id = fs['FileSystemId']
-        try:
-            efs.delete_file_system(FileSystemId=fs_id)
-            while True:
                 try:
-                    efs.describe_file_systems(FileSystemId=fs_id)
-                    time.sleep(5)
-                except efs.exceptions.FileSystemNotFound:
-                    logger.success(f"EFS file system {fs_id} deleted successfully.")
-                    break
+                    secret_details = client.describe_secret(SecretId=secret_name)
+                    primary_region = secret_details.get('PrimaryRegion', None)
 
-        except efs.exceptions.FileSystemInUse:
-            logger.warning(f"Cannot delete EFS file system {fs_id} as it's in use.")
-        except efs.exceptions.BadRequest:
-            logger.error(f"Bad request for EFS file system {fs_id}. Check request parameters.")
-        except efs.exceptions.InternalServerError:
-            logger.error(f"Internal server error when deleting EFS file system {fs_id}.")
-        except efs.exceptions.FileSystemNotFound:
-            logger.info(f"EFS file system {fs_id} not found. It might have been already deleted.")
-        except Exception as e:
-            logger.error(f"Error deleting EFS file system {fs_id}: {e}")
+                    # Skip deletion if the secret is a replica and not in its primary region
+                    if primary_region and primary_region != region_name:
+                        logger.info(f"Skipping deletion for replica secret: {secret_name} in region {region_name}. Primary region is {primary_region}.")
+                        continue
 
+                    # Delete the secret (whether primary or standalone)
+                    client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+                    logger.info(f"Successfully deleted secret: {region_name} => {secret_name}")
 
-def delete_redshift_serverless_namespace(region_name):
-    client = boto3.client('redshift-serverless', region_name=region_name)
-    response = client.list_namespaces()
-    namespaces = response.get('namespaces', [])
-
-    for row in namespaces:
-        namespace_name = row.get('namespaceName')
-        status = row.get('status')
-
-        if status == 'DELETING':
-            logger.info(f"Skipping {namespace_name} as it's already in DELETING status.")
-            continue
-
-        if namespace_name is None:
-            logger.warning(f"Skipping an entry due to missing namespaceName: {row}")
-            continue
-
-        try:
-            res = client.delete_namespace(namespaceName=namespace_name)
-            res_status = res.get('status')
-
-            if res_status == 'DELETING':
-                logger.success(f"Redshift serverless Namespace Successfully Deleted: {namespace_name}")
-            else:
-                logger.warning(f"Unexpected status after deletion request for {namespace_name}: {res_status}")
-        except Exception as e:
-            logger.error(f"Error deleting Redshift serverless Namespace {namespace_name}: {e}")
-            continue
+                except client.exceptions.ResourceNotFoundException:
+                    logger.warning(f"Secret {secret_name} not found in {region_name}. It might have been already deleted.")
+                except Exception as e:
+                    logger.error(f"Error processing secret {region_name} => {secret_name}: {e}")
 
 
-def delete_namespaces(region_name):
-    client = boto3.client('servicediscovery', region_name=region_name)
-    response = client.list_namespaces()
+    def delete_amis(region_name, aws_account_id):
+        ec2 = boto3.client('ec2', region_name=region_name)
 
-    if len(response["Namespaces"]) < 1:
-        # logger.info("No namespaces found.")
-        return
+        response = ec2.describe_images(Owners=[aws_account_id])
+        amis = response['Images']
 
-    logger.warning(f"Namespaces Found: count({len(response['Namespaces'])})")
+        if not amis:
+            return
+        logger.warning(f"EC2 AMIs Found: count({len(amis)})")
+        for ami in amis:
+            ami_id = ami['ImageId']
+            logger.warning(f"Deregistering AMI: {region_name}=>{ami_id}")
 
-    for namespace in response["Namespaces"]:
-        namespace_id = namespace['Id']
-        logger.info(f"Processing namespace: {namespace_id}")
-
-        # First, delete all services within the namespace
-        services = client.list_services(Filters=[{'Name': 'NAMESPACE_ID', 'Values': [namespace_id]}])
-        for service in services['Services']:
             try:
-                client.delete_service(Id=service['Id'])
-                logger.info(f"Deleted service {service['Id']} in namespace {namespace_id}")
-            except Exception as e:
-                logger.error(f"Error deleting service {service['Id']} in namespace {namespace_id}: {e}")
-                raise
+                ec2.deregister_image(ImageId=ami_id)
+                logger.success(f"Successfully deregistered AMI:{region_name}=>{ami_id}")
 
-        # Then, delete the namespace
-        try:
-            client.delete_namespace(Id=namespace_id)
-            logger.info(f"Deleted namespace {namespace_id}")
-        except Exception as e:
-            logger.error(f"Error deleting namespace {namespace_id}: {e}")
-            raise
+                # Optionally, delete associated snapshots
+                for device in ami.get('BlockDeviceMappings', []):
+                    snapshot_id = device.get('Ebs', {}).get('SnapshotId')
+                    if snapshot_id:
+                        logger.info(f"Deleting snapshot: {snapshot_id} associated with AMI:{region_name}=>{ami_id}")
+                        ec2.delete_snapshot(SnapshotId=snapshot_id)
+                        logger.success(f"Successfully deleted snapshot:{region_name}=>{snapshot_id}")
 
-    logger.success("All Namespaces deleted successfully!")
+            except ec2.exceptions.ClientError as e:
+                logger.error(f"Error deregistering AMI {ami_id}: {e}")
 
 
-def delete_db_instance_automated_backups(region_name):
-    rds = boto3.client('rds', region_name=region_name)
+    def delete_key_pairs(region_name):
+        ec2 = boto3.client('ec2', region_name=region_name)
 
-    res = rds.describe_db_instance_automated_backups()
-    if len(res["DBInstanceAutomatedBackups"]) < 1:
-        # logger.info("No automated backups to delete")
-        return
-    logger.warning(f"Automated Backups Found: count({len(res['DBInstanceAutomatedBackups'])})")
+        response = ec2.describe_key_pairs()
+        key_pairs = response['KeyPairs']
 
-    for backup in res["DBInstanceAutomatedBackups"]:
-        backup_arn = backup["DBInstanceArn"]
-        backup_id = backup["DBInstanceAutomatedBackupsArn"].split(":")[-1]
-        logger.info(f"Deleting automated backup {backup_id}")
-        try:
-            rds.delete_db_instance_automated_backup(
-                DbiResourceId=backup_arn,
-                DbiResourceIdForRestore=backup_arn,
-                BackupRetentionPeriod=0
-            )
-        except Exception as e:
-            logger.error(f"Error deleting automated backup {backup_id}: {e}")
-            raise
+        if not key_pairs:
+            return
+        logger.warning(f"EC2 Key Pairs Found: count({len(key_pairs)})")
+        for kp in key_pairs:
+            key_name = kp['KeyName']
+            logger.warning(f"Deleting key pair: {key_name}")
 
-    logger.success("All automated backups deleted successfully!")
+            try:
+                ec2.delete_key_pair(KeyName=key_name)
+                logger.success(f"Successfully deleted key pair:{region_name}=>{key_name}")
+            except ec2.exceptions.ClientError as e:
+                logger.error(f"Error deleting key pair {region_name}=>{key_name}: {e}")
 
 
-def wait_for_role_deletion(iam, role_name):
-    waiter_delay = 5
-    max_attempts = 12
-    last_response = None
+    def delete_launch_templates(region_name):
+        ec2 = boto3.client('ec2', region_name=region_name)
 
-    for _ in range(max_attempts):
-        try:
-            last_response = iam.get_role(RoleName=role_name)
-        except iam.exceptions.NoSuchEntityException:
+        response = ec2.describe_launch_templates()
+        launch_templates = response['LaunchTemplates']
+
+        if not launch_templates:
+            return
+        logger.warning(f"EC2 Launch templates Found: count({len(launch_templates)})")
+
+        for lt in launch_templates:
+            lt_id = lt['LaunchTemplateId']
+            lt_name = lt['LaunchTemplateName']
+            logger.warning(f"Deleting launch template: {region_name}=>{lt_name} ({lt_id})")
+
+            try:
+                ec2.delete_launch_template(LaunchTemplateId=lt_id)
+                logger.success(f"Successfully deleted launch template: {region_name}=>{lt_name} ({lt_id})")
+            except ec2.exceptions.ClientError as e:
+                logger.error(f"Error deleting launch template {region_name}=>{lt_name} ({lt_id}): {e}")
+
+
+    def delete_efs_file_systems(region_name):
+        efs = boto3.client('efs', region_name=region_name)
+        file_systems = efs.describe_file_systems()["FileSystems"]
+
+        if not file_systems:
             return
 
-        threads = []
-        for region in response['Regions']:
-            region_name = region['RegionName']
-            
-            # if region_name not in common_regions:
-            #     continue
-            logger.info(f"Working on {region_name}")
-            # Create a new thread to delete resources in the specified region
-            t = threading.Thread(target=self.delete_resources, args=(region_name,))
-            threads.append(t)
-            t.start()
+        logger.warning(f"Namespaces Found: count({len(file_systems)})")
+        for fs in file_systems:
+            fs_id = fs['FileSystemId']
+            try:
+                efs.delete_file_system(FileSystemId=fs_id)
+                while True:
+                    try:
+                        efs.describe_file_systems(FileSystemId=fs_id)
+                        time.sleep(5)
+                    except efs.exceptions.FileSystemNotFound:
+                        logger.success(f"EFS file system {fs_id} deleted successfully.")
+                        break
 
-        # Wait for all threads to finish
-        for t in threads:
-            t.join()
+            except efs.exceptions.FileSystemInUse:
+                logger.warning(f"Cannot delete EFS file system {fs_id} as it's in use.")
+            except efs.exceptions.BadRequest:
+                logger.error(f"Bad request for EFS file system {fs_id}. Check request parameters.")
+            except efs.exceptions.InternalServerError:
+                logger.error(f"Internal server error when deleting EFS file system {fs_id}.")
+            except efs.exceptions.FileSystemNotFound:
+                logger.info(f"EFS file system {fs_id} not found. It might have been already deleted.")
+            except Exception as e:
+                logger.error(f"Error deleting EFS file system {fs_id}: {e}")
 
-        # Delete S3 buckets and IAM roles
-        self.delete_s3_buckets()
-    # delete_all_roles() // bunu iptal ettim cunku beklenmedik hatalarsa sebep oluyor.
+
+    def delete_redshift_serverless_namespace(region_name):
+        client = boto3.client('redshift-serverless', region_name=region_name)
+        response = client.list_namespaces()
+        namespaces = response.get('namespaces', [])
+
+        for row in namespaces:
+            namespace_name = row.get('namespaceName')
+            status = row.get('status')
+
+            if status == 'DELETING':
+                logger.info(f"Skipping {namespace_name} as it's already in DELETING status.")
+                continue
+
+            if namespace_name is None:
+                logger.warning(f"Skipping an entry due to missing namespaceName: {row}")
+                continue
+
+            try:
+                res = client.delete_namespace(namespaceName=namespace_name)
+                res_status = res.get('status')
+
+                if res_status == 'DELETING':
+                    logger.success(f"Redshift serverless Namespace Successfully Deleted: {namespace_name}")
+                else:
+                    logger.warning(f"Unexpected status after deletion request for {namespace_name}: {res_status}")
+            except Exception as e:
+                logger.error(f"Error deleting Redshift serverless Namespace {namespace_name}: {e}")
+                continue
+
+
+    def delete_namespaces(region_name):
+        client = boto3.client('servicediscovery', region_name=region_name)
+        response = client.list_namespaces()
+
+        if len(response["Namespaces"]) < 1:
+            # logger.info("No namespaces found.")
+            return
+
+        logger.warning(f"Namespaces Found: count({len(response['Namespaces'])})")
+
+        for namespace in response["Namespaces"]:
+            namespace_id = namespace['Id']
+            logger.info(f"Processing namespace: {namespace_id}")
+
+            # First, delete all services within the namespace
+            services = client.list_services(Filters=[{'Name': 'NAMESPACE_ID', 'Values': [namespace_id]}])
+            for service in services['Services']:
+                try:
+                    client.delete_service(Id=service['Id'])
+                    logger.info(f"Deleted service {service['Id']} in namespace {namespace_id}")
+                except Exception as e:
+                    logger.error(f"Error deleting service {service['Id']} in namespace {namespace_id}: {e}")
+                    raise
+
+            # Then, delete the namespace
+            try:
+                client.delete_namespace(Id=namespace_id)
+                logger.info(f"Deleted namespace {namespace_id}")
+            except Exception as e:
+                logger.error(f"Error deleting namespace {namespace_id}: {e}")
+                raise
+
+        logger.success("All Namespaces deleted successfully!")
+
+
+    def delete_db_instance_automated_backups(region_name):
+        rds = boto3.client('rds', region_name=region_name)
+
+        res = rds.describe_db_instance_automated_backups()
+        if len(res["DBInstanceAutomatedBackups"]) < 1:
+            # logger.info("No automated backups to delete")
+            return
+        logger.warning(f"Automated Backups Found: count({len(res['DBInstanceAutomatedBackups'])})")
+
+        for backup in res["DBInstanceAutomatedBackups"]:
+            backup_arn = backup["DBInstanceArn"]
+            backup_id = backup["DBInstanceAutomatedBackupsArn"].split(":")[-1]
+            logger.info(f"Deleting automated backup {backup_id}")
+            try:
+                rds.delete_db_instance_automated_backup(
+                    DbiResourceId=backup_arn,
+                    DbiResourceIdForRestore=backup_arn,
+                    BackupRetentionPeriod=0
+                )
+            except Exception as e:
+                logger.error(f"Error deleting automated backup {backup_id}: {e}")
+                raise
+
+        logger.success("All automated backups deleted successfully!")
+
+
+    def wait_for_role_deletion(self, iam, role_name):
+        waiter_delay = 5
+        max_attempts = 12
+        last_response = None
+
+        for _ in range(max_attempts):
+            try:
+                last_response = iam.get_role(RoleName=role_name)
+            except iam.exceptions.NoSuchEntityException:
+                return
+
+            threads = []
+            for region in last_response['Regions']:
+                region_name = region['RegionName']
+                
+                # if region_name not in common_regions:
+                #     continue
+                logger.info(f"Working on {region_name}")
+                # Create a new thread to delete resources in the specified region
+                t = threading.Thread(target=self.delete_resources, args=(region_name,))
+                threads.append(t)
+                t.start()
+
+            # Wait for all threads to finish
+            for t in threads:
+                t.join()
+
+            # Delete S3 buckets and IAM roles
+            self.delete_s3_buckets()
+        # delete_all_roles() // bunu iptal ettim cunku beklenmedik hatalarsa sebep oluyor.
 
 
 
