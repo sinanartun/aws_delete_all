@@ -6,14 +6,10 @@ import time
 from datetime import datetime
 import boto3
 import botocore
-<<<<<<< HEAD
-import requests
 from botocore.exceptions import ClientError, BotoCoreError, WaiterError
-=======
 import urllib.request
-from botocore.exceptions import ClientError
-from botocore.exceptions import WaiterError
->>>>>>> bd7abe8e7ed157f5618dbc38c719e8d707220cb1
+
+
 
 
 class AwsDeleteAll:
