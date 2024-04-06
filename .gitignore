@@ -1,2 +1,6 @@
 .idea
 venv
+dist/*
+build/*
+aws_delete_all.egg-info
+.DS_Store

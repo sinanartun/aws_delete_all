@@ -1,9 +1,33 @@
+![PyPI - Downloads](https://img.shields.io/pypi/dw/aws-delete-all)
+![PyPI version](https://img.shields.io/pypi/v/aws-delete-all)
+![GitHub License](https://img.shields.io/github/license/sinanartun/aws_delete_all)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/m/sinanartun/aws_delete_all)
+![Github Created At](https://img.shields.io/github/created-at/sinanartun/aws_delete_all)
+![GitHub last commit](https://img.shields.io/github/last-commit/sinanartun/aws_delete_all)
+
+
+
+
 # AWS Delete All  Script
 
 ## Introduction
 This script is designed to clean up various resources within specific AWS regions in parallel using Python threading. This script uses `boto3`, the AWS SDK for Python, and checks the version of `boto3` currently installed on your system against the latest available version.
 
 Before deleting any resources, it will create threads for each AWS region, and perform the deletion of resources in each region concurrently.
+
+![Demo GIF](https://github.com/sinanartun/aws_delete_all/blob/main/images/demo.gif)
+
+## How to Use in AWS CloudShell
+AWS CloudShell is a browser-based shell that you can use to manage your AWS resources. Here's how you can use this script in AWS CloudShell:
+
+1- Open AWS CloudShell from the AWS Management Console.
+```bash
+pip install aws-delete-all
+```
+2- Run
+```bash
+aws-delete-all
+```
 
 ## AWS CLI Setup
 Before you can use `boto3`, you need to set up authentication credentials for your AWS account using the AWS CLI. 
@@ -26,7 +50,7 @@ aws configure
 
 ## Dependencies
 ```bash
-pip install boto3 requests loguru
+pip install boto3 loguru
 ```
 
 
@@ -137,7 +161,7 @@ This script deletes the following AWS resources in every AWS region:
 
 ### **Amazon IAM**:
 
-- delete_all_roles
+- delete_all_roles(disabled)
 
 ### **AWS Cloud Map** 
 - delete_namespaces
@@ -148,6 +172,15 @@ This script deletes the following AWS resources in every AWS region:
 ### **AWS Cognito** 
 - delete_cognito_user_pools
 - delete_cognito_identity_pools
+
+### **AWS Athena** 
+- delete_athena_saved_queries
+
+### **AWS API Gateway** 
+- delete_api_gateways
+
+### **AWS Config** 
+- delete_config_recorders_and_delivery_channels
 
 License
 This project is licensed under the MIT License. See the LICENSE file for details.
