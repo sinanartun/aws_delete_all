@@ -79,7 +79,6 @@ class AwsDeleteAll:
         try:
             response = ec2.describe_regions()
         except Exception as e:
-<<<<<<< HEAD
             logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
 
 
@@ -313,9 +312,6 @@ def wait_for_role_deletion(iam, role_name):
         try:
             last_response = iam.get_role(RoleName=role_name)
         except iam.exceptions.NoSuchEntityException:
-=======
-            logger.error(f"Failed to describe AWS regions: {e}")
->>>>>>> bd7abe8e7ed157f5618dbc38c719e8d707220cb1
             return
 
         threads = []
@@ -1616,107 +1612,6 @@ def wait_for_role_deletion(iam, role_name):
             logger.success(f"Redshift subnet group {subnet_group_name} deleted successfully")
 
 
-<<<<<<< HEAD
-def delete_cognito_user_pools(region_name: str):
-    client = boto3.client('cognito-idp', region_name=region_name)
-
-    try:
-        user_pools = client.list_user_pools(MaxResults=60)['UserPools']
-    except ClientError as e:
-        logger.error(f"Error listing user pools in region {region_name}: {e}")
-        return
-
-    for pool in user_pools:
-        pool_id = pool['Id']
-        try:
-            pool_details = client.describe_user_pool(UserPoolId=pool_id)
-            auto_verified_attributes = pool_details['UserPool'].get('AutoVerifiedAttributes', [])
-
-            # Remove phone_number from AutoVerifiedAttributes if present
-            if 'phone_number' in auto_verified_attributes:
-                auto_verified_attributes.remove('phone_number')
-
-            client.update_user_pool(
-                UserPoolId=pool_id,
-                AutoVerifiedAttributes=auto_verified_attributes,
-                DeletionProtection='INACTIVE'
-            )
-            logger.info(f"Updated settings for User Pool: {pool_id}")
-
-            client.delete_user_pool(UserPoolId=pool_id)
-            logger.success(f"Successfully deleted User Pool: {pool_id}")
-
-        except ClientError as e:
-            logger.error(f"Failed to delete User Pool {pool_id} in region {region_name}: {e}")
-        except BotoCoreError as e:
-            logger.error(f"BotoCore Error while processing User Pool {pool_id}: {e}")
-
-
-def delete_cognito_identity_pools(region_name: str):
-    """
-    Delete all Cognito Identity Pools in a specified AWS region.
-
-    Parameters:
-    - region_name (str): AWS region name.
-    """
-    client = boto3.client('cognito-identity', region_name=region_name)
-
-    # List all identity pools in the specified region
-    identity_pools = client.list_identity_pools(MaxResults=60)['IdentityPools']
-
-    # Iterate over each identity pool and delete it
-    for pool in identity_pools:
-        pool_id = pool['IdentityPoolId']
-        try:
-            client.delete_identity_pool(IdentityPoolId=pool_id)
-            logger.success(f"Successfully deleted Identity Pool: {pool_id} in region {region_name}")
-        except Exception as e:
-            logger.error(f"Failed to delete Identity Pool {pool_id} in region {region_name}: {e}")
-
-
-def delete_sns_topics(region_name: str):
-    sns_client = boto3.client('sns', region_name=region_name)
-
-    def get_all_topics():
-        """Retrieve all SNS topics in the specified region, handling pagination."""
-        next_token = None
-        while True:
-            if next_token:
-                response = sns_client.list_topics(NextToken=next_token)
-            else:
-                response = sns_client.list_topics()
-            yield from response.get('Topics', [])
-            next_token = response.get('NextToken')
-            if not next_token:
-                break
-
-    for topic in get_all_topics():
-        topic_arn = topic['TopicArn']
-        try:
-            sns_client.delete_topic(TopicArn=topic_arn)
-            logger.info(f"Successfully deleted SNS Topic: {topic_arn} in region {region_name}")
-        except sns_client.exceptions.NotFoundException:
-            logger.warning(f"SNS Topic {topic_arn} not found in region {region_name}")
-        except Exception as e:
-            logger.error(f"Failed to delete SNS Topic {topic_arn} in region {region_name}: {e}")
-
-
-def delete_vpc(region_name):
-    max_attempts = 10
-    ec2 = boto3.client('ec2', region_name=region_name)
-    res = ec2.describe_vpcs()
-    vpc_count = len(res["Vpcs"])
-    if vpc_count < 1:
-        # logger.info("No Vpcs")
-        return False
-    logger.warning("VPC FOUND !!!")
-    vpc_ids = [vpc['VpcId'] for vpc in res['Vpcs']]
-
-    # Delete all VPCs in the region
-    for vpc_id in vpc_ids:
-        attempts = 0
-        while attempts < max_attempts:
-=======
     def delete_all_redshift_clusters(self, region_name):
         client = boto3.client('redshift', region_name=region_name)
 
@@ -1732,7 +1627,6 @@ def delete_vpc(region_name):
         for cluster in response['Clusters']:
             cluster_identifier = cluster['ClusterIdentifier']
             logger.warning(f"Deleting Redshift cluster:{cluster_identifier} (~ 90 seconds)")
->>>>>>> bd7abe8e7ed157f5618dbc38c719e8d707220cb1
             try:
                 waiter = client.get_waiter('cluster_deleted')
                 client.delete_cluster(
