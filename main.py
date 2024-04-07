@@ -9,6 +9,7 @@ import botocore
 import urllib.request
 from botocore.exceptions import ClientError
 from botocore.exceptions import WaiterError
+import pprint
 
 
 class AwsDeleteAll:
@@ -437,34 +438,56 @@ class AwsDeleteAll:
     def delete_route53_hosted_zones_and_record_sets(self, region_name):
         client = boto3.client('route53', region_name=region_name)
 
-        # List all hosted zones
-        hosted_zones = client.list_hosted_zones()
+        try:
+            # List all hosted zones
+            response = client.list_hosted_zones()
+            hosted_zones = response['HostedZones']
+            if not hosted_zones:
+                return
 
-        if len(hosted_zones['HostedZones']) > 0:
-            logger.warning(f"Route53 Hosted Zones Found: count({len(hosted_zones['HostedZones'])})")
-        else:
-            return
+            logger.warning(f"Route53 Hosted Zones Found: count({len(hosted_zones)})")
 
-        for hosted_zone in hosted_zones['HostedZones']:
-            # Delete all record sets
-            record_sets = client.list_resource_record_sets(HostedZoneId=hosted_zone['Id'])
-            for record_set in record_sets['ResourceRecordSets']:
-                client.change_resource_record_sets(
-                    HostedZoneId=hosted_zone['Id'],
-                    ChangeBatch={
-                        'Changes': [
-                            {
-                                'Action': 'DELETE',
-                                'ResourceRecordSet': record_set
-                            },
-                        ]
-                    }
-                )
+            for hosted_zone in hosted_zones:
+                hosted_zone_id = hosted_zone['Id']
+                
+                # List all record sets
+                paginator = client.get_paginator('list_resource_record_sets')
+                for page in paginator.paginate(HostedZoneId=hosted_zone_id):
+                    record_sets = page['ResourceRecordSets']
+                    
+                    # Filter out NS and SOA records for the zone apex
+                    deletable_record_sets = [
+                        rs for rs in record_sets if rs['Type'] not in ('NS', 'SOA') or rs['Name'] != hosted_zone['Name']
+                    ]
+                    
+                    # Delete record sets
+                    for record_set in deletable_record_sets:
+                        try:
+                            client.change_resource_record_sets(
+                                HostedZoneId=hosted_zone_id,
+                                ChangeBatch={
+                                    'Changes': [
+                                        {
+                                            'Action': 'DELETE',
+                                            'ResourceRecordSet': record_set
+                                        },
+                                    ]
+                                }
+                            )
+                            logger.info(f"Deleted record set: {record_set['Name']} Type: {record_set['Type']}")
+                        except Exception as e:
+                            logger.error(f"Error deleting record set: {record_set['Name']}, Type: {record_set['Type']}, Error: {str(e)}")
 
-            # Delete the hosted zone
-            client.delete_hosted_zone(Id=hosted_zone['Id'])
+                # Delete the hosted zone
+                try:
+                    client.delete_hosted_zone(Id=hosted_zone_id)
+                    logger.info(f"Deleted hosted zone: {hosted_zone['Name']}")
+                except Exception as e:
+                    logger.error(f"Error deleting hosted zone: {hosted_zone['Name']}, Error: {str(e)}")
 
-        logger.success("All Route53 hosted zones and record sets have been deleted.")    
+        except Exception as e:
+            logger.error(f"Failed to delete hosted zones and record sets: {str(e)}")
+
 
     def delete_codebuild_projects(self, region_name):
         client = boto3.client('codebuild', region_name=region_name)
@@ -1718,34 +1741,73 @@ class AwsDeleteAll:
 
 
 
+
+
     def delete_cognito_user_pools(self, region_name: str):
         client = boto3.client('cognito-idp', region_name=region_name)
-        user_pools = client.list_user_pools(MaxResults=60)['UserPools']
 
-        for pool in user_pools:
-            pool_id = pool['Id']
-            try:
-                # Retrieve current settings
-                pool_details = client.describe_user_pool(UserPoolId=pool_id)
-                current_auto_verified_attributes = pool_details['UserPool'].get('AutoVerifiedAttributes', [])
+        # Initialize pagination for listing user pools
+        paginator = client.get_paginator('list_user_pools')
+        page_iterator = paginator.paginate(MaxResults=60)
+        try:
+            for page in page_iterator:
+                user_pools = page.get('UserPools', [])
+                
 
-                # If phone_number is in AutoVerifiedAttributes, remove it to avoid the SMS configuration requirement
-                # new_auto_verified_attributes = [attr for attr in current_auto_verified_attributes if attr != 'phone_number']
+                for pool in user_pools:
+                    res = client.describe_user_pool(UserPoolId=pool['Id'])
+                    user_pool = res['UserPool']
+                    DeletionProtection = user_pool.get('DeletionProtection', 'ACTIVE')
+                    if DeletionProtection == 'ACTIVE':
+                        update_params = {
+                            'UserPoolId': user_pool['Id'],
+                            'Policies': {
+                                'PasswordPolicy':  {
+                                    
+                                        'MinimumLength': 8,
+                                        'RequireLowercase': False,
+                                        'RequireNumbers': False,
+                                        'RequireSymbols': False,
+                                        'RequireUppercase': False,
+                                        'TemporaryPasswordValidityDays': 7
+                                },  
+                            },
+                            'DeletionProtection': 'INACTIVE',
+                            'LambdaConfig': user_pool.get('LambdaConfig', {}),
+                            'AutoVerifiedAttributes': user_pool['AutoVerifiedAttributes'],
+                            'SmsVerificationMessage': 'Your authentication code is {####}',
+                            'EmailVerificationMessage': 'Your authentication code is {####}',
+                            'EmailVerificationSubject': user_pool.get('EmailVerificationSubject', 'Your Verification Code'),
+                            'VerificationMessageTemplate': {
+                                'SmsMessage': 'Your authentication code is {####}',
+                                'EmailMessage': 'Your authentication code is {####}',
+                                'EmailSubject': user_pool.get('EmailVerificationSubject', 'Your Verification Code'),
+                                'DefaultEmailOption': 'CONFIRM_WITH_CODE'
+                            },
+                            'SmsAuthenticationMessage':'Your authentication code is {####}',
+                            'UserAttributeUpdateSettings': user_pool['UserAttributeUpdateSettings'],
+                            'MfaConfiguration': user_pool['MfaConfiguration'],
+                            'EmailConfiguration': user_pool.get('EmailConfiguration', {}),
+                            'SmsConfiguration': user_pool['SmsConfiguration'],
+                            'UserPoolTags': user_pool.get('UserPoolTags', {}),
+                            'AdminCreateUserConfig': {
+                                'AllowAdminCreateUserOnly': False,
+                                'InviteMessageTemplate': {
+                                    'SMSMessage': 'Welcome {username}, your authentication code is {####}.',
+                                    'EmailMessage': 'Welcome {username}, your authentication code is {####}.',
+                                    'EmailSubject': 'Welcome to our service!',
+                                }
+                            },
+                            'UserPoolAddOns': {'AdvancedSecurityMode': 'OFF'},
+                            'AccountRecoverySetting': user_pool['AccountRecoverySetting'],
+                                }
+                        response = client.update_user_pool(**update_params)
+                    response = client.delete_user_pool(UserPoolId=user_pool['Id'])
+                    logger.success(f"User pool ({user_pool['Id']}) deleted successfully.")
+        except Exception as e:
+            logger.error(f"Failed to update user pool: {e}")
 
-                # Apply updated settings
-                client.update_user_pool(
-                    UserPoolId=pool_id,
-                    AutoVerifiedAttributes=current_auto_verified_attributes,
-                    DeletionProtection='INACTIVE'
-                    # SmsConfiguration can be added here if needed
-                )
 
-                logger.info(
-                    f"Updated settings and disabled deletion protection for User Pool: {pool_id} in region {region_name}")
-                client.delete_user_pool(UserPoolId=pool_id)
-                logger.success(f"Successfully deleted User Pool: {pool_id} in region {region_name}")
-            except Exception as e:
-                logger.error(f"Failed to delete User Pool {pool_id} in region {region_name}: {e}")
 
 
     def delete_cognito_identity_pools(self, region_name: str):

@@ -1,0 +1,266 @@
+{
+    'AccountRecoverySetting': {
+        'RecoveryMechanisms': [
+            {
+                'Name': 'verified_email',
+                'Priority': 1
+            }
+        ]
+    },
+    'AdminCreateUserConfig': {
+        'AllowAdminCreateUserOnly': False,
+        'UnusedAccountValidityDays': 7
+    },
+    'Arn': 'arn:aws:cognito-idp:eu-north-1:112061248042:userpool/eu-north-1_nqtQgEsAd',
+    'AutoVerifiedAttributes': ['phone_number'],
+    'CreationDate': datetime.datetime(2024, 3, 27, 20, 36, 12, 638000, tzinfo=tzlocal()),
+    'DeletionProtection': 'ACTIVE',
+    'EmailConfiguration': {
+        'EmailSendingAccount': 'COGNITO_DEFAULT'
+    },
+    'EstimatedNumberOfUsers': 1,
+    'Id': 'eu-north-1_nqtQgEsAd',
+    'LambdaConfig': {},
+    'LastModifiedDate': datetime.datetime(2024, 3, 27, 20, 36, 12, 638000, tzinfo=tzlocal()),
+    'MfaConfiguration': 'OFF',
+    'Name': 'support',
+    'Policies': {
+        'PasswordPolicy': {
+            'MinimumLength': 8,
+            'RequireLowercase': False,
+            'RequireNumbers': False,
+            'RequireSymbols': False,
+            'RequireUppercase': False,
+            'TemporaryPasswordValidityDays': 7
+        }
+    },
+    'SchemaAttributes': [
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': False,
+            'Name': 'sub',
+            'Required': True,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '1'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'name',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'given_name',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'family_name',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'middle_name',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'nickname',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'preferred_username',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'profile',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'picture',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'website',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'email',
+            'Required': True,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'Boolean',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'email_verified',
+            'Required': False
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'gender',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'birthdate',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '10',
+                'MinLength': '10'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'zoneinfo',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'locale',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'phone_number',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'Boolean',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'phone_number_verified',
+            'Required': False
+        },
+        {
+            'AttributeDataType': 'String',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'address',
+            'Required': False,
+            'StringAttributeConstraints': {
+                'MaxLength': '2048',
+                'MinLength': '0'
+            }
+        },
+        {
+            'AttributeDataType': 'Number',
+            'DeveloperOnlyAttribute': False,
+            'Mutable': True,
+            'Name': 'updated_at',
+            'NumberAttributeConstraints': {
+                'MinValue': '0'
+            },
+            'Required': False
+        }
+    ],
+    'SmsConfiguration': {
+        'ExternalId': '2c1b41d8-6f30-4ec1-be48-9ceb59f799ce',
+        'SnsCallerArn': 'arn:aws:iam::112061248042:role/service-role/cognito-sns-role',
+        'SnsRegion': 'eu-north-1'
+    },
+    'UserAttributeUpdateSettings': {
+        'AttributesRequireVerificationBeforeUpdate': ['phone_number']
+    },
+    'UserPoolTags': {},
+    'UsernameAttributes': ['email'],
+    'UsernameConfiguration': {
+        'CaseSensitive': False
+    },
+    'VerificationMessageTemplate': {
+        'DefaultEmailOption': 'CONFIRM_WITH_CODE'
+    }
+}
