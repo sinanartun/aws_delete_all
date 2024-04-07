@@ -184,3 +184,4 @@ This script deletes the following AWS resources in every AWS region:
 
 License
 This project is licensed under the MIT License. See the LICENSE file for details.
+[cloudtoolbox.tech](https://www.cloudtoolbox.tech)
