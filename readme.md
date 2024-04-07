@@ -1,5 +1,5 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dw/aws-delete-all)
-![PyPI version](https://img.shields.io/pypi/v/aws-delete-all)
+[![PyPI version](https://img.shields.io/pypi/v/aws-delete-all)](https://pypi.org/project/aws-delete-all/)
 ![GitHub License](https://img.shields.io/github/license/sinanartun/aws_delete_all)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/sinanartun/aws_delete_all)
 ![Github Created At](https://img.shields.io/github/created-at/sinanartun/aws_delete_all)
