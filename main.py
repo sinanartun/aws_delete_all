@@ -96,7 +96,7 @@ class AwsDeleteAll:
 
         # Wait for all threads to finish
         for t in threads:
-            t.join()
+            t.join(timeout=60)
 
         # Delete S3 buckets and IAM roles
         self.delete_s3_buckets()

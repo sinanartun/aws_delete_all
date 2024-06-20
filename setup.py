@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 
-with open("readme.md", "r", encoding="utf-8") as fh:
+with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name='aws-delete-all',
-    version='0.5.35',
+    version='0.5.36',
     author='Sinan Artun',
     author_email='sinanartun@gmail.com',
     description='A script that concurrently deletes common AWS resources like S3 buckets, RDS instances, and EC2 instances across all AWS regions.',
@@ -21,7 +21,7 @@ setup(
     ],
     python_requires='>=3.9',
     install_requires=[
-        'boto3==1.34.79',
+        'boto3>=1.34.130',
         'loguru'
     ],
     entry_points={
