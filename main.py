@@ -129,6 +129,7 @@ class AwsDeleteAll:
         self.delete_efs(region_name)
         self.delete_db_instances(region_name)
         self.delete_rds(region_name)
+        self.delete_rds_proxies(region_name)
         self.delete_rds_subnet_groups(region_name)
         self.delete_rds_option_groups(region_name)
         self.delete_rds_parameter_groups(region_name)
@@ -1130,6 +1131,26 @@ class AwsDeleteAll:
                 logger.error(f"Error deleting DB Parameter Group {group_name}: {e}")
                 raise
 
+
+    def delete_rds_proxies(self, region_name):
+        rds = boto3.client('rds', region_name=region_name)
+
+        # Describe RDS proxies
+        res = rds.describe_db_proxies()
+        if len(res["DBProxies"]) < 1:
+            return
+
+        logger.warning(f"RDS Proxies Found: count({len(res['DBProxies'])})")
+
+        for proxy in res["DBProxies"]:
+            proxy_name = proxy["DBProxyName"]
+            logger.info(f"Deleting RDS Proxy: {proxy_name}")
+            try:
+                rds.delete_db_proxy(DBProxyName=proxy_name)
+            except Exception as e:
+                logger.error(f"Error deleting RDS Proxy {proxy_name}: {e}")
+                raise
+    
     # logger.success("All DB Parameter Groups deleted successfully!")
 
 
