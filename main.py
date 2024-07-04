@@ -10,7 +10,6 @@ import urllib.request
 from botocore.exceptions import ClientError
 from botocore.exceptions import WaiterError
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
-import pprint
 
 
 class AwsDeleteAll:
