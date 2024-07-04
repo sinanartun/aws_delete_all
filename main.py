@@ -9,6 +9,7 @@ import botocore
 import urllib.request
 from botocore.exceptions import ClientError
 from botocore.exceptions import WaiterError
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 import pprint
 
 
@@ -136,11 +137,11 @@ class AwsDeleteAll:
         self.delete_db_cluster_parameter_groups(region_name)
         self.delete_db_cluster_snapshots(region_name)
         self.delete_db_instance_automated_backups(region_name)
-        self.delete_endpoint(region_name)
+        self.delete_endpoints(region_name)
         self.delete_route_tables(region_name)
         self.delete_network_interface(region_name)
         self.delete_subnets(region_name)
-        self.delete_sgr(region_name)
+        # self.delete_sgr(region_name)
         self.delete_sg(region_name)
         self.delete_elastic_ip(region_name)
         self.delete_internet_gateway(region_name)
@@ -1934,18 +1935,41 @@ class AwsDeleteAll:
                 logger.error(f"Subnet deletion failed with exception: {str(e)}")
 
 
-    def delete_endpoint(self, region_name):
-        ec2 = boto3.client('ec2', region_name=region_name)
-        endpoints = ec2.describe_vpc_endpoints()
-        if len(endpoints["VpcEndpoints"]) < 1:
-            # logger.info("No VpcEndpoints")
-            return False
-        logger.warning("VpcEndpoints FOUND !!!")
-        for endpoint in endpoints['VpcEndpoints']:
-            ec2.delete_vpc_endpoints(VpcEndpointIds=[endpoint['VpcEndpointId']])
-            # waiter = ec2.get_waiter('vpc_endpoint_deleted')
-            # waiter.wait(VpcEndpointIds=[endpoint['VpcEndpointId']])
-            logger.warning(f"VpcEndpoint successfully deleted VpcEndpointId: {endpoint['VpcEndpointId']}")
+    def delete_endpoints(self, region_name, delay=10, max_attempts=30):
+        try:
+            ec2 = boto3.client('ec2', region_name=region_name)
+            endpoints = ec2.describe_vpc_endpoints()
+            endpoint_ids = [endpoint['VpcEndpointId'] for endpoint in endpoints['VpcEndpoints']]
+
+            if len(endpoint_ids) < 1:
+                return False
+
+            logger.warning("VpcEndpoints FOUND !!!")
+            ec2.delete_vpc_endpoints(VpcEndpointIds=endpoint_ids)
+            for endpoint_id in endpoint_ids:
+                for _ in range(max_attempts):
+                    try:
+                        endpoints = ec2.describe_vpc_endpoints(VpcEndpointIds=[endpoint_id])
+                        if len(endpoints['VpcEndpoints']) == 0:
+                            logger.warning(f"VpcEndpoint successfully deleted VpcEndpointId: {endpoint_id}")
+                            break
+                    except ClientError as e:
+                        if e.response['Error']['Code'] == 'InvalidVpcEndpointId.NotFound':
+                            logger.warning(f"VpcEndpoint successfully deleted VpcEndpointId: {endpoint_id}")
+                            break
+                        else:
+                            logger.info("An error occurred during polling: " + str(e))
+                            raise
+                    time.sleep(delay)
+                else:
+                    raise TimeoutError(f"Timed out waiting for VPC endpoint {endpoint_id} to be deleted.")
+            return endpoint_ids
+        except (NoCredentialsError, PartialCredentialsError) as e:
+            logger.error("AWS credentials not found or incomplete: " + str(e))
+        except ClientError as e:
+            logger.error("An AWS client error occurred: " + str(e))
+        except Exception as e:
+            logger.error("An error occurred: " + str(e))
 
 
 

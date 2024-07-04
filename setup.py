@@ -5,7 +5,7 @@ with open("readme.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='aws-delete-all',
-    version='0.5.40',
+    version='0.5.42',
     author='Sinan Artun',
     author_email='sinanartun@gmail.com',
     description='A script that concurrently deletes common AWS resources like S3 buckets, RDS instances, and EC2 instances across all AWS regions.',
@@ -22,7 +22,8 @@ setup(
     python_requires='>=3.9',
     install_requires=[
         'boto3>=1.34.139',
-        'loguru'
+        'loguru',
+        'pip>=24.1.1'
     ],
     entry_points={
         'console_scripts': [
