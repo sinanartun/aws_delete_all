@@ -2317,7 +2317,6 @@ class AwsDeleteAll:
 
     def delete_efs(self, region_name):
         efs = boto3.client('efs', region_name=region_name)
-
         file_systems = efs.describe_file_systems()
 
         # Delete all EFS file systems and their associated mount targets
@@ -2336,23 +2335,43 @@ class AwsDeleteAll:
                 mount_target_id = mt['MountTargetId']
 
                 try:
-
                     efs.delete_mount_target(MountTargetId=mount_target_id)
-                    waiter = efs.get_waiter('mount_target_deleted')
-                    waiter.wait(MountTargetId=mount_target_id)
-                    logger.success(f'Mount target {mount_target_id} deleted successfully.')
+                    self._wait_for_deletion(
+                        lambda: efs.describe_mount_targets(FileSystemId=file_system_id),
+                        'MountTargets', mount_target_id
+                    )
+                    logger.info(f'Mount target {mount_target_id} deleted successfully.')
                 except ClientError as e:
                     logger.info(f'Error deleting mount target {mount_target_id}: {e}')
 
             # Delete the file system
             try:
-
                 efs.delete_file_system(FileSystemId=file_system_id)
-                waiter = efs.get_waiter('file_system_deleted')
-                waiter.wait(FileSystemId=file_system_id)
-                logger.success(f'File system {file_system_id} deleted successfully.')
+                self._wait_for_deletion(
+                    lambda: efs.describe_file_systems(),
+                    'FileSystems', file_system_id
+                )
+                logger.info(f'File system {file_system_id} deleted successfully.')
             except ClientError as e:
                 logger.error(f'Error deleting file system {file_system_id}: {e}')
+
+    def _wait_for_deletion(self, describe_func, key, resource_id, max_attempts=30, wait_time=10):
+        attempts = 0
+        while attempts < max_attempts:
+            try:
+                response = describe_func()
+                resources = response.get(key, [])
+                if not any(res for res in resources if res[key[:-1] + 'Id'] == resource_id):
+                    break
+            except ClientError as e:
+                # If the resource does not exist, it means it has been deleted
+                if e.response['Error']['Code'] == 'FileSystemNotFound':
+                    break
+            attempts += 1
+            time.sleep(wait_time)
+        else:
+            logger.error(f'Failed to confirm deletion of {resource_id} after {max_attempts * wait_time} seconds.')
+
 
 
     def delete_elastic_ip(self, region_name):
