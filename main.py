@@ -1574,21 +1574,34 @@ class AwsDeleteAll:
 
         res = client.describe_load_balancers()
 
-        rt_count = len(res["LoadBalancers"])
-        # logger.info(pt(), json.dumps(res, indent=4, sort_keys=True, default=str))
-        # res = client.describe_target_groups()
-        # logger.info(pt(), json.dumps(res, indent=4, sort_keys=True, default=str))
-        if rt_count < 1:
-            # logger.info("No LoadBalancer")
+        if len(res["LoadBalancers"]) < 1:
             return False
-        for x in res["LoadBalancers"]:
 
-            if x.get("LoadBalancerArn") is not None:
+        for x in res["LoadBalancers"]:
+            # Delete target groups
+            target_groups = client.describe_target_groups(LoadBalancerArn=x.get("LoadBalancerArn"))
+            for tg in target_groups['TargetGroups']:
+                client.delete_target_group(TargetGroupArn=tg['TargetGroupArn'])
+
+            # Detach from auto-scaling groups
+            autoscaling_client = boto3.client('autoscaling', region_name=region_name)
+            asgs = autoscaling_client.describe_auto_scaling_groups()
+            for asg in asgs['AutoScalingGroups']:
+                if x['LoadBalancerName'] in asg['LoadBalancerNames']:
+                    autoscaling_client.detach_load_balancers(
+                        AutoScalingGroupName=asg['AutoScalingGroupName'],
+                        LoadBalancerNames=[x['LoadBalancerName']]
+                    )
+
+            # Delete the load balancer
+            try:
                 res1 = client.delete_load_balancer(
                     LoadBalancerArn=x.get("LoadBalancerArn")
                 )
-
                 logger.info(json.dumps(res1, indent=2, sort_keys=True, default=str))
+            except client.exceptions.ResourceInUseException as e:
+                logger.error(f"Load balancer cannot be deleted: {e}")
+
 
 
 

@@ -1,5 +1,5 @@
-boto3==1.34.139
-botocore==1.34.139
+boto3==1.35.48
+botocore==1.35.48
 jmespath==1.0.1
 loguru==0.7.2
 python-dateutil==2.9.0.post0
