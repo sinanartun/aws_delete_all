@@ -21,7 +21,7 @@ setup(
     ],
     python_requires='>=3.9',
     install_requires=[
-        'boto3>=1.35.48',
+        'boto3>=1.35.74',
         'loguru',
         'pip>=24.1.1'
     ],
