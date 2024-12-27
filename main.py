@@ -2072,8 +2072,15 @@ class AwsDeleteAll:
 
 
     def delete_all_notebook_instances(self, region_name):
-        logger.info(f"Notebook instances region ({region_name}).")
+        
         sagemaker_client = boto3.client('sagemaker', region_name=region_name)
+        
+        s2 = boto3.Session(region_name=region_name)
+        available_services = s2.get_available_services()
+        if'sagemaker' not in available_services:
+            logger.info("SageMaker service is not available in the specified region.")
+            return False
+
 
         # Get list of notebook instances
         response = sagemaker_client.list_notebook_instances()
