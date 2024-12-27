@@ -2072,6 +2072,7 @@ class AwsDeleteAll:
 
 
     def delete_all_notebook_instances(self, region_name):
+        logger.info(f"Notebook instances region ({region_name}).")
         sagemaker_client = boto3.client('sagemaker', region_name=region_name)
 
         # Get list of notebook instances
