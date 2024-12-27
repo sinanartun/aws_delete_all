@@ -5,7 +5,7 @@ with open("readme.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='aws-delete-all',
-    version='0.5.47',
+    version='0.5.48',
     author='Sinan Artun',
     author_email='sinanartun@gmail.com',
     description='A script that concurrently deletes common AWS resources like S3 buckets, RDS instances, and EC2 instances across all AWS regions.',
