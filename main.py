@@ -2072,16 +2072,45 @@ class AwsDeleteAll:
 
 
     def delete_all_notebook_instances(self, region_name):
+        available_regions = ['us-west-2',
+ 'af-south-1',
+ 'eu-north-1',
+ 'ap-east-1',
+ 'ap-southeast-2',
+ 'il-central-1',
+ 'sa-east-1',
+ 'eu-central-1',
+ 'ap-south-1',
+ 'eu-west-1',
+ 'ap-south-2',
+ 'us-west-1',
+ 'ap-northeast-3',
+ 'ap-southeast-3',
+ 'ap-northeast-1',
+ 'ap-southeast-1',
+ 'eu-west-3',
+ 'ca-central-1',
+ 'eu-west-2',
+ 'me-south-1',
+ 'me-central-1',
+ 'ap-northeast-2',
+ 'us-east-1',
+ 'us-east-2']
+        
+        if region_name not in available_regions:
+            logger.info(f"Region {region_name} is not supported.")
+            return False
+        
         
         sagemaker_client = boto3.client('sagemaker', region_name=region_name)
-        
-        s2 = boto3.Session(region_name=region_name)
-        available_services = s2.get_available_services()
-        if'sagemaker' not in available_services:
-            logger.info("SageMaker service is not available in the specified region.")
+        if not hasattr(sagemaker_client, 'list_notebook_instances'):
+            # Call the method if it exists
+            
+            print(f"Method do not exists {region_name} and was called successfully.")
             return False
-
-
+        else:
+            print(f"Method exists {region_name} and was called successfully.")
+        
         # Get list of notebook instances
         response = sagemaker_client.list_notebook_instances()
 
