@@ -1593,6 +1593,9 @@ class AwsDeleteAll:
                         LoadBalancerNames=[x['LoadBalancerName']]
                     )
 
+            # Detach from other services
+            self.detach_load_balancer_from_services(x['LoadBalancerArn'], region_name)
+
             # Delete the load balancer
             try:
                 res1 = client.delete_load_balancer(
@@ -1602,7 +1605,19 @@ class AwsDeleteAll:
             except client.exceptions.ResourceInUseException as e:
                 logger.error(f"Load balancer cannot be deleted: {e}")
 
+    def detach_load_balancer_from_services(self, load_balancer_arn, region_name):
+        client = boto3.client('elbv2', region_name=region_name)
+        # Detach from ECS services
+        ecs_client = boto3.client('ecs', region_name=region_name)
+        clusters = ecs_client.list_clusters()['clusterArns']
+        for cluster in clusters:
+            services = ecs_client.list_services(cluster=cluster)['serviceArns']
+            for service in services:
+                ecs_client.update_service(cluster=cluster, service=service, loadBalancers=[])
+                logger.info(f"Detached load balancer {load_balancer_arn} from ECS service {service} in cluster {cluster}")
 
+        # Detach from other services if needed
+        # Add additional detachment logic here if necessary
 
 
     def delete_target_groups(self, region_name):
@@ -2108,8 +2123,7 @@ class AwsDeleteAll:
             
             print(f"Method do not exists {region_name} and was called successfully.")
             return False
-        else:
-            print(f"Method exists {region_name} and was called successfully.")
+
         
         # Get list of notebook instances
         response = sagemaker_client.list_notebook_instances()
