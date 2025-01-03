@@ -1567,6 +1567,38 @@ class AwsDeleteAll:
                         break  # Some other error occurred, so break the loop
 
 
+    def detach_load_balancer_from_services(self, load_balancer_arn, region_name):
+        client = boto3.client('elbv2', region_name=region_name)
+        # Detach from ECS services
+        ecs_client = boto3.client('ecs', region_name=region_name)
+        clusters = ecs_client.list_clusters()['clusterArns']
+        for cluster in clusters:
+            services = ecs_client.list_services(cluster=cluster)['serviceArns']
+            for service in services:
+                ecs_client.update_service(cluster=cluster, service=service, loadBalancers=[])
+                logger.info(f"Detached load balancer {load_balancer_arn} from ECS service {service} in cluster {cluster}")
+
+        # Detach from other services if needed
+        # Add additional detachment logic here if necessary
+
+    def detach_vpc_endpoints_from_load_balancer(self, load_balancer_arn, region_name):
+        ec2 = boto3.client('ec2', region_name=region_name)
+        elbv2 = boto3.client('elbv2', region_name=region_name)
+
+        # Describe the load balancer to get its VPC ID
+        load_balancer = elbv2.describe_load_balancers(LoadBalancerArns=[load_balancer_arn])['LoadBalancers'][0]
+        vpc_id = load_balancer['VpcId']
+
+        # Describe VPC endpoints in the VPC
+        vpc_endpoints = ec2.describe_vpc_endpoints(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])['VpcEndpoints']
+
+        for endpoint in vpc_endpoints:
+            # Check if the endpoint is associated with the load balancer
+            if load_balancer_arn in endpoint.get('NetworkLoadBalancerArns', []):
+                # Remove the association
+                ec2.modify_vpc_endpoint(VpcEndpointId=endpoint['VpcEndpointId'], RemoveNetworkLoadBalancerArns=[load_balancer_arn])
+                logger.info(f"Detached VPC endpoint {endpoint['VpcEndpointId']} from load balancer {load_balancer_arn}")
+
     def delete_load_balancer(self, region_name):
         self.delete_load_balancer_listener(region_name)
 
@@ -1595,6 +1627,7 @@ class AwsDeleteAll:
 
             # Detach from other services
             self.detach_load_balancer_from_services(x['LoadBalancerArn'], region_name)
+            self.detach_vpc_endpoints_from_load_balancer(x['LoadBalancerArn'], region_name)
 
             # Delete the load balancer
             try:
@@ -1604,21 +1637,6 @@ class AwsDeleteAll:
                 logger.info(json.dumps(res1, indent=2, sort_keys=True, default=str))
             except client.exceptions.ResourceInUseException as e:
                 logger.error(f"Load balancer cannot be deleted: {e}")
-
-    def detach_load_balancer_from_services(self, load_balancer_arn, region_name):
-        client = boto3.client('elbv2', region_name=region_name)
-        # Detach from ECS services
-        ecs_client = boto3.client('ecs', region_name=region_name)
-        clusters = ecs_client.list_clusters()['clusterArns']
-        for cluster in clusters:
-            services = ecs_client.list_services(cluster=cluster)['serviceArns']
-            for service in services:
-                ecs_client.update_service(cluster=cluster, service=service, loadBalancers=[])
-                logger.info(f"Detached load balancer {load_balancer_arn} from ECS service {service} in cluster {cluster}")
-
-        # Detach from other services if needed
-        # Add additional detachment logic here if necessary
-
 
     def delete_target_groups(self, region_name):
         try:
