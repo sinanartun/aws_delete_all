@@ -1535,39 +1535,8 @@ class AwsDeleteAll:
                     raise
 
 
-    def delete_load_balancer_listener(self, region_name):
-        client = boto3.client('elbv2', region_name=region_name)
-
-        res = client.describe_load_balancers()
-
-        lb_count = len(res["LoadBalancers"])
-
-        if lb_count < 1:
-            # logger.info("No LoadBalancer Listener")
-            return False
-
-        for lb in res['LoadBalancers']:
-            listeners_response = client.describe_listeners(LoadBalancerArn=lb['LoadBalancerArn'])
-
-            for listener in listeners_response['Listeners']:
-                logger.info('Checking listener:', listener['ListenerArn'])
-
-                client.delete_listener(ListenerArn=listener['ListenerArn'])
-
-                # Custom waiting logic
-                while True:
-                    try:
-                        client.describe_listeners(ListenerArn=listener['ListenerArn'])
-                        time.sleep(5)  # Wait for 5 seconds before checking again
-                    except client.exceptions.ListenerNotFoundException:
-                        logger.error('Listener deleted:', listener['ListenerArn'])
-                        break  # Listener has been deleted, so break the loop
-                    except Exception as e:
-                        logger.critical('Error waiting for listener to be deleted:', e)
-                        break  # Some other error occurred, so break the loop
-
-
     def detach_load_balancer_from_services(self, load_balancer_arn, region_name):
+        logger.info(f"Detaching load balancer {load_balancer_arn} from services in region {region_name}")
         client = boto3.client('elbv2', region_name=region_name)
         # Detach from ECS services
         ecs_client = boto3.client('ecs', region_name=region_name)
@@ -1582,12 +1551,14 @@ class AwsDeleteAll:
         # Add additional detachment logic here if necessary
 
     def detach_vpc_endpoints_from_load_balancer(self, load_balancer_arn, region_name):
+        logger.info(f"Detaching VPC endpoints from load balancer {load_balancer_arn} in region {region_name}")
         ec2 = boto3.client('ec2', region_name=region_name)
         elbv2 = boto3.client('elbv2', region_name=region_name)
 
         # Describe the load balancer to get its VPC ID
         load_balancer = elbv2.describe_load_balancers(LoadBalancerArns=[load_balancer_arn])['LoadBalancers'][0]
         vpc_id = load_balancer['VpcId']
+        logger.info(f"Load balancer {load_balancer_arn} is in VPC {vpc_id}")
 
         # Describe VPC endpoints in the VPC
         vpc_endpoints = ec2.describe_vpc_endpoints(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])['VpcEndpoints']
@@ -1599,23 +1570,148 @@ class AwsDeleteAll:
                 ec2.modify_vpc_endpoint(VpcEndpointId=endpoint['VpcEndpointId'], RemoveNetworkLoadBalancerArns=[load_balancer_arn])
                 logger.info(f"Detached VPC endpoint {endpoint['VpcEndpointId']} from load balancer {load_balancer_arn}")
 
+    def delete_vpc_endpoint_service(self, load_balancer_arn, region_name):
+        logger.info(f"Deleting VPC endpoint service associated with load balancer {load_balancer_arn} in region {region_name}")
+        ec2 = boto3.client('ec2', region_name=region_name)
+
+        # Describe VPC endpoint services
+        vpc_endpoint_services = ec2.describe_vpc_endpoint_service_configurations()['ServiceConfigurations']
+
+        for service in vpc_endpoint_services:
+            if load_balancer_arn in service.get('NetworkLoadBalancerArns', []):
+                service_id = service['ServiceId']
+                try:
+                    ec2.delete_vpc_endpoint_service_configurations(ServiceIds=[service_id])
+                    logger.info(f"Deleted VPC endpoint service {service_id} associated with load balancer {load_balancer_arn}")
+                except Exception as e:
+                    logger.error(f"Error deleting VPC endpoint service {service_id}: {e}")
+
+    def detach_security_groups_from_load_balancer(self, load_balancer_arn, region_name):
+        logger.info(f"Detaching security groups from load balancer {load_balancer_arn} in region {region_name}")
+        elbv2 = boto3.client('elbv2', region_name=region_name)
+
+        # Describe the load balancer to get its security groups
+        load_balancer = elbv2.describe_load_balancers(LoadBalancerArns=[load_balancer_arn])['LoadBalancers'][0]
+        security_groups = load_balancer.get('SecurityGroups', [])
+
+        if security_groups:
+            # Remove the security groups
+            elbv2.modify_load_balancer_attributes(
+                LoadBalancerArn=load_balancer_arn,
+                Attributes=[
+                    {
+                        'Key': 'deletion_protection.enabled',
+                        'Value': 'false'
+                    }
+                ]
+            )
+            logger.info(f"Detached security groups {security_groups} from load balancer {load_balancer_arn}")
+
+    def wait_for_lb_disassociation(self, load_balancer_arn, region_name, service_id, max_attempts=5, delay=5):
+        ec2 = boto3.client('ec2', region_name=region_name)
+        for attempt in range(max_attempts):
+            svc_configs = ec2.describe_vpc_endpoint_service_configurations(ServiceIds=[service_id])['ServiceConfigurations']
+            if svc_configs and load_balancer_arn not in svc_configs[0].get('NetworkLoadBalancerArns', []):
+                logger.info(f"Successfully disassociated LB {load_balancer_arn} from service {service_id}")
+                return
+            logger.info(f"LB {load_balancer_arn} still associated with service {service_id}, retrying...")
+            time.sleep(delay)
+        logger.warning(f"Failed to confirm LB {load_balancer_arn} disassociation from service {service_id} after retries")
+
+    def reject_vpc_endpoint_connections(self, service_id, region_name, max_attempts=10, delay=5):
+        ec2 = boto3.client('ec2', region_name=region_name)
+        logger.info(f"Rejecting existing VPC endpoint connections for service {service_id} in region {region_name}")
+        
+        attempt = 0
+        while attempt < max_attempts:
+            try:
+                connections = ec2.describe_vpc_endpoint_connections(
+                    Filters=[{'Name': 'service-id', 'Values': [service_id]}]
+                )['VpcEndpointConnections']
+                
+                if not connections:
+                    logger.info(f"No more VPC endpoint connections to reject for service {service_id}")
+                    return True
+                    
+                active_connections = [
+                    conn for conn in connections 
+                    if 'State' in conn and conn['State'] not in ['rejected', 'deleted']
+                ]
+                
+                if not active_connections:
+                    logger.info(f"All connections for service {service_id} are already rejected or deleted")
+                    return True
+                    
+                for conn in active_connections:
+                    try:
+                        ec2.reject_vpc_endpoint_connections(
+                            ServiceId=service_id,
+                            VpcEndpointIds=[conn['VpcEndpointId']]
+                        )
+                        logger.info(f"Rejected connection for endpoint {conn['VpcEndpointId']}")
+                    except Exception as e:
+                        logger.error(f"Failed to reject connection {conn['VpcEndpointId']}: {str(e)}")
+                
+                attempt += 1
+                if attempt < max_attempts:
+                    logger.info(f"Waiting {delay} seconds before checking connections again (attempt {attempt}/{max_attempts})")
+                    time.sleep(delay)
+                
+            except Exception as e:
+                logger.error(f"Error processing VPC endpoint connections: {str(e)}")
+                attempt += 1
+                if attempt < max_attempts:
+                    time.sleep(delay)
+        
+        logger.warning(f"Max attempts ({max_attempts}) reached while trying to reject VPC endpoint connections")
+        return False
+
+    def remove_load_balancer_endpoint_integration(self, load_balancer_arn, region_name):
+        logger.info(f"Removing endpoint integration for load balancer {load_balancer_arn} in region {region_name}")
+        self.detach_vpc_endpoints_from_load_balancer(load_balancer_arn, region_name)
+        # First reject any active connections
+        ec2 = boto3.client('ec2', region_name=region_name)
+        vpc_endpoint_services = ec2.describe_vpc_endpoint_service_configurations()['ServiceConfigurations']
+        for svc in vpc_endpoint_services:
+            if load_balancer_arn in svc.get('NetworkLoadBalancerArns', []):
+                service_id = svc['ServiceId']
+                self.reject_vpc_endpoint_connections(service_id, region_name)
+                # Disassociate LB from service
+                try:
+                    ec2.modify_vpc_endpoint_service_configuration(
+                        ServiceId=service_id,
+                        RemoveNetworkLoadBalancerArns=[load_balancer_arn]
+                    )
+                    logger.info(f"Disassociated LB {load_balancer_arn} from endpoint service {service_id}")
+                    self.wait_for_lb_disassociation(load_balancer_arn, region_name, service_id)
+                except Exception as e:
+                    logger.error(f"Error disassociating LB {load_balancer_arn} from service {service_id}: {e}")
+        # Finally remove the service
+        self.delete_vpc_endpoint_service(load_balancer_arn, region_name)
+
     def delete_load_balancer(self, region_name):
+        logger.info(f"Deleting load balancer listeners in region {region_name}")
         self.delete_load_balancer_listener(region_name)
 
         client = boto3.client('elbv2', region_name=region_name)
 
         res = client.describe_load_balancers()
+        logger.info(f"Load balancers in region {region_name}: {json.dumps(res, indent=2, sort_keys=True, default=str)}")
 
         if len(res["LoadBalancers"]) < 1:
+            logger.info(f"No load balancers found in region {region_name}")
             return False
 
         for x in res["LoadBalancers"]:
+            logger.info(f"Deleting target groups for load balancer {x.get('LoadBalancerArn')} in region {region_name}")
             # Delete target groups
             target_groups = client.describe_target_groups(LoadBalancerArn=x.get("LoadBalancerArn"))
             for tg in target_groups['TargetGroups']:
                 client.delete_target_group(TargetGroupArn=tg['TargetGroupArn'])
+                logger.info(f"Deleted target group {tg['TargetGroupArn']}")
 
             # Detach from auto-scaling groups
+            logger.info(f"Detaching load balancer {x.get('LoadBalancerArn')} from auto-scaling groups in region {region_name}")
             autoscaling_client = boto3.client('autoscaling', region_name=region_name)
             asgs = autoscaling_client.describe_auto_scaling_groups()
             for asg in asgs['AutoScalingGroups']:
@@ -1624,19 +1720,68 @@ class AwsDeleteAll:
                         AutoScalingGroupName=asg['AutoScalingGroupName'],
                         LoadBalancerNames=[x['LoadBalancerName']]
                     )
+                    logger.info(f"Detached load balancer {x.get('LoadBalancerArn')} from auto-scaling group {asg['AutoScalingGroupName']}")
 
             # Detach from other services
             self.detach_load_balancer_from_services(x['LoadBalancerArn'], region_name)
-            self.detach_vpc_endpoints_from_load_balancer(x['LoadBalancerArn'], region_name)
+            self.remove_load_balancer_endpoint_integration(x['LoadBalancerArn'], region_name)
+            self.detach_security_groups_from_load_balancer(x['LoadBalancerArn'], region_name)
 
-            # Delete the load balancer
-            try:
-                res1 = client.delete_load_balancer(
-                    LoadBalancerArn=x.get("LoadBalancerArn")
-                )
-                logger.info(json.dumps(res1, indent=2, sort_keys=True, default=str))
-            except client.exceptions.ResourceInUseException as e:
-                logger.error(f"Load balancer cannot be deleted: {e}")
+            # Check for remaining associations
+            logger.info(f"Checking for remaining associations for load balancer {x.get('LoadBalancerArn')}")
+            remaining_associations = client.describe_load_balancers(LoadBalancerArns=[x.get("LoadBalancerArn")])
+            if remaining_associations['LoadBalancers']:
+                logger.warning(f"Remaining associations found for load balancer {x.get('LoadBalancerArn')}: {json.dumps(remaining_associations, indent=2, sort_keys=True, default=str)}")
+
+            # Retry logic for deleting the load balancer
+            retries = 5
+            while retries > 0:
+                try:
+                    res1 = client.delete_load_balancer(
+                        LoadBalancerArn=x.get("LoadBalancerArn")
+                    )
+                    logger.info(json.dumps(res1, indent=2, sort_keys=True, default=str))
+                    break
+                except client.exceptions.ResourceInUseException as e:
+                    logger.error(f"Load balancer cannot be deleted: {e}")
+                    retries -= 1
+                    if retries > 0:
+                        logger.info(f"Retrying to delete load balancer {x.get('LoadBalancerArn')} in 10 seconds...")
+                        time.sleep(10)
+                    else:
+                        logger.error(f"Failed to delete load balancer {x.get('LoadBalancerArn')} after multiple attempts")
+
+    def delete_load_balancer_listener(self, region_name):
+        client = boto3.client('elbv2', region_name=region_name)
+
+        res = client.describe_load_balancers()
+
+        lb_count = len(res["LoadBalancers"])
+
+        if lb_count < 1:
+            logger.info(f"No load balancers found in region {region_name}")
+            return False
+
+        for lb in res['LoadBalancers']:
+            listeners_response = client.describe_listeners(LoadBalancerArn=lb['LoadBalancerArn'])
+
+            for listener in listeners_response['Listeners']:
+                logger.info(f"Deleting listener {listener['ListenerArn']} for load balancer {lb['LoadBalancerArn']}")
+                client.delete_listener(ListenerArn=listener['ListenerArn'])
+
+                # Custom waiting logic
+                while True:
+                    try:
+                        client.describe_listeners(ListenerArn=listener['ListenerArn'])
+                        time.sleep(5)  # Wait for 5 seconds before checking again
+                    except client.exceptions.ListenerNotFoundException:
+                        logger.info(f"Listener {listener['ListenerArn']} deleted")
+                        break  # Listener has been deleted, so break the loop
+                    except Exception as e:
+                        logger.critical(f"Error waiting for listener {listener['ListenerArn']} to be deleted: {e}")
+                        break  # Some other error occurred, so break the loop
+
+
 
     def delete_target_groups(self, region_name):
         try:
