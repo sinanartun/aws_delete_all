@@ -14,10 +14,7 @@ from botocore.exceptions import WaiterError
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 
 
-# Cognito templates duplicated previously across multiple keys.
-_COGNITO_AUTH_CODE_MESSAGE = 'Your authentication code is {####}'
-
-
+# Cached helper used by multiple cleanup routines below.
 def _resolve_default_region() -> str:
     """Resolve a default AWS region from the environment or boto3 session.
 
@@ -1402,14 +1399,38 @@ class AwsDeleteAll:
         logger.warning(f"DynamoDB table Found: count({len(tables)})")
         for table in tables:
             logger.warning(f"Deleting DynamoDB table: {table}")
+            self._delete_dynamodb_table(dynamodb, table)
 
-            try:
-                dynamodb.delete_table(TableName=table)
-                logger.success(f"Successfully deleted DynamoDB table: {table}")
-            except dynamodb.exceptions.ResourceNotFoundException:
-                logger.warning(f"DynamoDB table {table} not found. It might have been already deleted.")
-            except Exception as e:
+    def _delete_dynamodb_table(self, dynamodb, table):
+        """Delete a single DynamoDB table, disabling deletion protection if needed."""
+        try:
+            dynamodb.delete_table(TableName=table)
+            logger.success(f"Successfully deleted DynamoDB table: {table}")
+            return
+        except dynamodb.exceptions.ResourceNotFoundException:
+            logger.warning(f"DynamoDB table {table} not found. It might have been already deleted.")
+            return
+        except ClientError as e:
+            err_code = e.response.get('Error', {}).get('Code', '')
+            err_msg = e.response.get('Error', {}).get('Message', '') or str(e)
+            # Newer DynamoDB tables can have deletion protection enabled, which
+            # blocks delete_table with a ValidationException. Disable it first.
+            if err_code != 'ValidationException' or 'protected against deletion' not in err_msg.lower():
                 logger.error(f"Error deleting DynamoDB table {table}: {e}")
+                return
+
+        # Disable deletion protection and retry once.
+        try:
+            logger.info(f"Disabling deletion protection on DynamoDB table {table}")
+            dynamodb.update_table(TableName=table, DeletionProtectionEnabled=False)
+            dynamodb.get_waiter('table_exists').wait(
+                TableName=table,
+                WaiterConfig={'Delay': 5, 'MaxAttempts': 60},
+            )
+            dynamodb.delete_table(TableName=table)
+            logger.success(f"Successfully deleted DynamoDB table: {table}")
+        except Exception as e:
+            logger.error(f"Error deleting DynamoDB table {table} after disabling protection: {e}")
 
 
     def delete_dynamodb_backups(self, region_name):
@@ -1771,28 +1792,27 @@ class AwsDeleteAll:
         self.delete_vpc_endpoint_service(load_balancer_arn, region_name)
 
     def delete_load_balancer(self, region_name):
-        logger.info(f"Deleting load balancer listeners in region {region_name}")
         self.delete_load_balancer_listener(region_name)
 
         client = boto3.client('elbv2', region_name=region_name)
 
         res = client.describe_load_balancers()
-        logger.info(f"Load balancers in region {region_name}: {json.dumps(res, indent=2, sort_keys=True, default=str)}")
 
         if len(res["LoadBalancers"]) < 1:
-            logger.info(f"No load balancers found in region {region_name}")
             return False
 
+        logger.warning(f"Load Balancers Found: count({len(res['LoadBalancers'])})")
+
         for x in res["LoadBalancers"]:
-            logger.info(f"Deleting target groups for load balancer {x.get('LoadBalancerArn')} in region {region_name}")
+            lb_arn = x.get("LoadBalancerArn")
+            logger.info(f"Deleting target groups for load balancer {lb_arn} in region {region_name}")
             # Delete target groups
-            target_groups = client.describe_target_groups(LoadBalancerArn=x.get("LoadBalancerArn"))
+            target_groups = client.describe_target_groups(LoadBalancerArn=lb_arn)
             for tg in target_groups['TargetGroups']:
                 client.delete_target_group(TargetGroupArn=tg['TargetGroupArn'])
                 logger.info(f"Deleted target group {tg['TargetGroupArn']}")
 
             # Detach from auto-scaling groups
-            logger.info(f"Detaching load balancer {x.get('LoadBalancerArn')} from auto-scaling groups in region {region_name}")
             autoscaling_client = boto3.client('autoscaling', region_name=region_name)
             asgs = autoscaling_client.describe_auto_scaling_groups()
             for asg in asgs['AutoScalingGroups']:
@@ -1801,46 +1821,35 @@ class AwsDeleteAll:
                         AutoScalingGroupName=asg['AutoScalingGroupName'],
                         LoadBalancerNames=[x['LoadBalancerName']]
                     )
-                    logger.info(f"Detached load balancer {x.get('LoadBalancerArn')} from auto-scaling group {asg['AutoScalingGroupName']}")
+                    logger.info(f"Detached load balancer {lb_arn} from auto-scaling group {asg['AutoScalingGroupName']}")
 
             # Detach from other services
             self.detach_load_balancer_from_services(x['LoadBalancerArn'], region_name)
             self.remove_load_balancer_endpoint_integration(x['LoadBalancerArn'], region_name)
             self.detach_security_groups_from_load_balancer(x['LoadBalancerArn'], region_name)
 
-            # Check for remaining associations
-            logger.info(f"Checking for remaining associations for load balancer {x.get('LoadBalancerArn')}")
-            remaining_associations = client.describe_load_balancers(LoadBalancerArns=[x.get("LoadBalancerArn")])
-            if remaining_associations['LoadBalancers']:
-                logger.warning(f"Remaining associations found for load balancer {x.get('LoadBalancerArn')}: {json.dumps(remaining_associations, indent=2, sort_keys=True, default=str)}")
-
             # Retry logic for deleting the load balancer
             retries = 5
             while retries > 0:
                 try:
-                    res1 = client.delete_load_balancer(
-                        LoadBalancerArn=x.get("LoadBalancerArn")
-                    )
-                    logger.info(json.dumps(res1, indent=2, sort_keys=True, default=str))
+                    client.delete_load_balancer(LoadBalancerArn=lb_arn)
+                    logger.success(f"Successfully deleted load balancer: {lb_arn}")
                     break
                 except client.exceptions.ResourceInUseException as e:
                     logger.error(f"Load balancer cannot be deleted: {e}")
                     retries -= 1
                     if retries > 0:
-                        logger.info(f"Retrying to delete load balancer {x.get('LoadBalancerArn')} in 10 seconds...")
+                        logger.info(f"Retrying to delete load balancer {lb_arn} in 10 seconds...")
                         time.sleep(10)
                     else:
-                        logger.error(f"Failed to delete load balancer {x.get('LoadBalancerArn')} after multiple attempts")
+                        logger.error(f"Failed to delete load balancer {lb_arn} after multiple attempts")
 
     def delete_load_balancer_listener(self, region_name):
         client = boto3.client('elbv2', region_name=region_name)
 
         res = client.describe_load_balancers()
 
-        lb_count = len(res["LoadBalancers"])
-
-        if lb_count < 1:
-            logger.info(f"No load balancers found in region {region_name}")
+        if len(res["LoadBalancers"]) < 1:
             return False
 
         for lb in res['LoadBalancers']:
@@ -2050,55 +2059,55 @@ class AwsDeleteAll:
                     user_pool = res['UserPool']
                     deletion_protection = user_pool.get('DeletionProtection', 'ACTIVE')
                     if deletion_protection == 'ACTIVE':
-                        update_params = {
-                            'UserPoolId': user_pool['Id'],
-                            'Policies': {
-                                'PasswordPolicy':  {
-                                    
-                                        'MinimumLength': 8,
-                                        'RequireLowercase': False,
-                                        'RequireNumbers': False,
-                                        'RequireSymbols': False,
-                                        'RequireUppercase': False,
-                                        'TemporaryPasswordValidityDays': 7
-                                },  
-                            },
-                            'DeletionProtection': 'INACTIVE',
-                            'LambdaConfig': user_pool.get('LambdaConfig', {}),
-                            'AutoVerifiedAttributes': user_pool['AutoVerifiedAttributes'],
-                            'SmsVerificationMessage': _COGNITO_AUTH_CODE_MESSAGE,
-                            'EmailVerificationMessage': _COGNITO_AUTH_CODE_MESSAGE,
-                            'EmailVerificationSubject': user_pool.get('EmailVerificationSubject', 'Your Verification Code'),
-                            'VerificationMessageTemplate': {
-                                'SmsMessage': _COGNITO_AUTH_CODE_MESSAGE,
-                                'EmailMessage': _COGNITO_AUTH_CODE_MESSAGE,
-                                'EmailSubject': user_pool.get('EmailVerificationSubject', 'Your Verification Code'),
-                                'DefaultEmailOption': 'CONFIRM_WITH_CODE'
-                            },
-                            'SmsAuthenticationMessage': _COGNITO_AUTH_CODE_MESSAGE,
-                            'UserAttributeUpdateSettings': user_pool['UserAttributeUpdateSettings'],
-                            'MfaConfiguration': user_pool['MfaConfiguration'],
-                            'EmailConfiguration': user_pool.get('EmailConfiguration', {}),
-                            'SmsConfiguration': user_pool['SmsConfiguration'],
-                            'UserPoolTags': user_pool.get('UserPoolTags', {}),
-                            'AdminCreateUserConfig': {
-                                'AllowAdminCreateUserOnly': False,
-                                'InviteMessageTemplate': {
-                                    'SMSMessage': 'Welcome {username}, your authentication code is {####}.',
-                                    'EmailMessage': 'Welcome {username}, your authentication code is {####}.',
-                                    'EmailSubject': 'Welcome to our service!',
-                                }
-                            },
-                            'UserPoolAddOns': {'AdvancedSecurityMode': 'OFF'},
-                            'AccountRecoverySetting': user_pool['AccountRecoverySetting'],
-                                }
-                        client.update_user_pool(**update_params)
-                    client.delete_user_pool(UserPoolId=user_pool['Id'])
-                    logger.success(f"User pool ({user_pool['Id']}) deleted successfully.")
+                        try:
+                            self._disable_user_pool_deletion_protection(client, user_pool)
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to disable deletion protection for user pool {user_pool['Id']}: {e}"
+                            )
+                            continue
+                    try:
+                        client.delete_user_pool(UserPoolId=user_pool['Id'])
+                        logger.success(f"User pool ({user_pool['Id']}) deleted successfully.")
+                    except Exception as e:
+                        logger.error(f"Failed to delete user pool {user_pool['Id']}: {e}")
         except Exception as e:
             logger.error(f"Failed to update user pool: {e}")
 
+    @staticmethod
+    def _disable_user_pool_deletion_protection(client, user_pool):
+        """Disable a user pool's DeletionProtection without echoing optional fields back.
 
+        ``update_user_pool`` accepts every parameter as optional, but if a field is
+        present in the request boto3 validates it. Pools without an SMS sender or
+        without UserAttributeUpdateSettings raise KeyError when we copy them
+        verbatim from describe_user_pool. The minimal flip is what we want.
+        """
+        params = {
+            'UserPoolId': user_pool['Id'],
+            'DeletionProtection': 'INACTIVE',
+        }
+        # Preserve fields only when describe_user_pool returned them.
+        for key in (
+            'AutoVerifiedAttributes',
+            'MfaConfiguration',
+            'AccountRecoverySetting',
+            'UserPoolTags',
+            'EmailConfiguration',
+            'LambdaConfig',
+            'UserAttributeUpdateSettings',
+            'UserPoolAddOns',
+            'AdminCreateUserConfig',
+            'Policies',
+            'VerificationMessageTemplate',
+            'SmsAuthenticationMessage',
+            'SmsVerificationMessage',
+            'EmailVerificationMessage',
+            'EmailVerificationSubject',
+        ):
+            if key in user_pool:
+                params[key] = user_pool[key]
+        client.update_user_pool(**params)
 
 
     def delete_cognito_identity_pools(self, region_name: str):
