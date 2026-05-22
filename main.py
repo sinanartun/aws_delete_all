@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from loguru import logger
 import threading
@@ -11,6 +12,25 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.exceptions import WaiterError
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+
+
+# Cognito templates duplicated previously across multiple keys.
+_COGNITO_AUTH_CODE_MESSAGE = 'Your authentication code is {####}'
+
+
+def _resolve_default_region() -> str:
+    """Resolve a default AWS region from the environment or boto3 session.
+
+    Avoids hardcoding 'us-east-1' so the script honours user configuration
+    (AWS_REGION / AWS_DEFAULT_REGION / aws config) when one is available.
+    Falls back to 'us-east-1' only as a last resort.
+    """
+    return (
+        os.environ.get('AWS_REGION')
+        or os.environ.get('AWS_DEFAULT_REGION')
+        or boto3.session.Session().region_name
+        or 'us-east-1'
+    )
 
 
 class AwsDeleteAll:
@@ -48,8 +68,8 @@ class AwsDeleteAll:
             logger.error("Could not check for latest version of boto3.")
         elif str(latest_available_version) != str(boto3.__version__):
             logger.warning(f"Latest available version of boto3 is: {latest_available_version}")
-            logger.warning(f"you can upgrade boto3 using this command:")
-            logger.warning(f"pip install --upgrade boto3")
+            logger.warning("you can upgrade boto3 using this command:")
+            logger.warning("pip install --upgrade boto3")
 
         logger.success("Current boto3 version: " + boto3.__version__)
         logger.success("Please remember to check correct boto3 version documentation !!!")
@@ -65,7 +85,8 @@ class AwsDeleteAll:
 
 
     def get_aws_account_id(self):
-        sts = boto3.client('sts', region_name='us-east-1')
+        # STS is a global service; use the global endpoint instead of hardcoding a region.
+        sts = boto3.client('sts', region_name=_resolve_default_region())
         response = sts.get_caller_identity()
         return response['Account']
 
@@ -75,8 +96,8 @@ class AwsDeleteAll:
         if not aws_account_id:
             logger.error("Failed to retrieve AWS account ID")
             return
-        # Initialize EC2 client in a specific region
-        ec2 = boto3.client('ec2', region_name='us-east-1')
+        # Initialize EC2 client in the user's default region to enumerate all regions.
+        ec2 = boto3.client('ec2', region_name=_resolve_default_region())
         try:
             response = ec2.describe_regions()
         except Exception as e:
@@ -101,7 +122,6 @@ class AwsDeleteAll:
 
         # Delete S3 buckets and IAM roles
         self.delete_s3_buckets()
-    # delete_all_roles() // bunu iptal ettim cunku beklenmedik hatalarsa sebep oluyor.
 
 
 
@@ -326,7 +346,7 @@ class AwsDeleteAll:
             pass
         except client.exceptions.UnsupportedUserEditionException:
             pass
-        except Exception as e:  # Generic exception
+        except Exception:  # Generic exception
             pass
 
 
@@ -544,11 +564,13 @@ class AwsDeleteAll:
         logger.success("All Step Functions state machines have been deleted.")
 
     def delete_cloudfront_distributions(self, region_name):
-        # CloudFront is a global service, only operate from us-east-1 to avoid duplicate work across region threads
+        # CloudFront is a global service; only run once (when iterating us-east-1)
+        # to avoid duplicate work across the per-region threads.
         if region_name != 'us-east-1':
             return
 
-        client = boto3.client('cloudfront', region_name='us-east-1')
+        # CloudFront's control-plane API is global and only accepts 'us-east-1'.
+        client = boto3.client('cloudfront', region_name='us-east-1')  # NOSONAR python:S6262
 
         # List all distributions (paginated)
         distribution_ids = []
@@ -787,32 +809,6 @@ class AwsDeleteAll:
                     logger.warning(f"Secret {secret_name} not found. It might have been already deleted.")
                 except Exception as e:
                     logger.error(f"Error deleting secret {region_name} => {secret_name}: {e}")
-
-
-
-
-
-# def delete_all_secrets(region_name):
-#     client = boto3.client('secretsmanager', region_name=region_name)
-#     paginator = client.get_paginator('list_secrets')
-
-#     for page in paginator.paginate():
-#         for secret in page['SecretList']:
-#             secret_name = secret['Name']
-#             try:
-#                 try:
-#                     client.cancel_rotate_secret(SecretId=secret_name)
-#                     logger.info(f"Rotation cancelled for secret:{region_name}=> {secret_name}")
-#                 except client.exceptions.ResourceNotFoundException:
-#                     pass
-
-#                 client.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-#                 logger.success(f"Successfully deleted secret:{region_name}=> {secret_name}")
-
-#             except client.exceptions.ResourceNotFoundException:
-#                 logger.warning(f"Secret {secret_name} not found. It might have been already deleted.")
-#             except Exception as e:
-#                 logger.error(f"Error deleting secret {region_name}=>{secret_name}: {e}")
 
 
     def delete_amis(self, region_name):
@@ -1131,7 +1127,7 @@ class AwsDeleteAll:
         for group in res["OptionGroupsList"]:
             group_name = group["OptionGroupName"]
             group_description = group["OptionGroupDescription"]
-            if group_description.startswith("Provides a") or group_description.startswith("Default"):
+            if group_description.startswith(("Provides a", "Default")):
                 # logger.info(f"Skipping default Option Group (default option group can not be deleted): {group_name}")
                 continue
             logger.info(f"Deleting Option Group: {group_name}")
@@ -1358,22 +1354,36 @@ class AwsDeleteAll:
             return
         logger.warning(f"S3 Buckets Found: count({len(buckets)})")
 
+        # Use ExpectedBucketOwner to guard against name-takeover / cross-account
+        # confusion: every operation will fail-fast if a bucket isn't owned by
+        # the caller (e.g. a bucket that was deleted and re-created elsewhere).
+        owner = self.aws_account_id
+
         # Delete each bucket
         for bucket in buckets:
             try:
                 # Delete all objects and all object versions in the bucket
                 paginator = s3.get_paginator('list_object_versions')
-                for page in paginator.paginate(Bucket=bucket['Name']):
+                for page in paginator.paginate(Bucket=bucket['Name'], ExpectedBucketOwner=owner):
                     if 'Versions' in page:
                         for version in page['Versions']:
-                            s3.delete_object(Bucket=bucket['Name'], Key=version['Key'], VersionId=version['VersionId'])
+                            s3.delete_object(
+                                Bucket=bucket['Name'],
+                                Key=version['Key'],
+                                VersionId=version['VersionId'],
+                                ExpectedBucketOwner=owner,
+                            )
                     if 'DeleteMarkers' in page:
                         for delete_marker in page['DeleteMarkers']:
-                            s3.delete_object(Bucket=bucket['Name'], Key=delete_marker['Key'],
-                                            VersionId=delete_marker['VersionId'])
+                            s3.delete_object(
+                                Bucket=bucket['Name'],
+                                Key=delete_marker['Key'],
+                                VersionId=delete_marker['VersionId'],
+                                ExpectedBucketOwner=owner,
+                            )
 
                 # Delete the bucket
-                s3.delete_bucket(Bucket=bucket['Name'])
+                s3.delete_bucket(Bucket=bucket['Name'], ExpectedBucketOwner=owner)
                 waiter = s3.get_waiter('bucket_not_exists')
                 waiter.wait(Bucket=bucket['Name'])
                 logger.success(f"Successfully Deleted Bucket: {bucket['Name']}")
@@ -1609,7 +1619,6 @@ class AwsDeleteAll:
 
     def detach_load_balancer_from_services(self, load_balancer_arn, region_name):
         logger.info(f"Detaching load balancer {load_balancer_arn} from services in region {region_name}")
-        client = boto3.client('elbv2', region_name=region_name)
         # Detach from ECS services
         ecs_client = boto3.client('ecs', region_name=region_name)
         clusters = ecs_client.list_clusters()['clusterArns']
@@ -1681,7 +1690,7 @@ class AwsDeleteAll:
 
     def wait_for_lb_disassociation(self, load_balancer_arn, region_name, service_id, max_attempts=5, delay=5):
         ec2 = boto3.client('ec2', region_name=region_name)
-        for attempt in range(max_attempts):
+        for _ in range(max_attempts):
             svc_configs = ec2.describe_vpc_endpoint_service_configurations(ServiceIds=[service_id])['ServiceConfigurations']
             if svc_configs and load_balancer_arn not in svc_configs[0].get('NetworkLoadBalancerArns', []):
                 logger.info(f"Successfully disassociated LB {load_balancer_arn} from service {service_id}")
@@ -1973,8 +1982,6 @@ class AwsDeleteAll:
 
         # Get all security groups in the specified region
         response = ec2.describe_security_groups()
-        # logger.info(json.dumps(response, indent=4, sort_keys=True, default=str))
-        # exit()
 
         # Loop through all security groups and delete all inbound and outbound rules
         for security_group in response['SecurityGroups']:
@@ -2041,8 +2048,8 @@ class AwsDeleteAll:
                 for pool in user_pools:
                     res = client.describe_user_pool(UserPoolId=pool['Id'])
                     user_pool = res['UserPool']
-                    DeletionProtection = user_pool.get('DeletionProtection', 'ACTIVE')
-                    if DeletionProtection == 'ACTIVE':
+                    deletion_protection = user_pool.get('DeletionProtection', 'ACTIVE')
+                    if deletion_protection == 'ACTIVE':
                         update_params = {
                             'UserPoolId': user_pool['Id'],
                             'Policies': {
@@ -2059,16 +2066,16 @@ class AwsDeleteAll:
                             'DeletionProtection': 'INACTIVE',
                             'LambdaConfig': user_pool.get('LambdaConfig', {}),
                             'AutoVerifiedAttributes': user_pool['AutoVerifiedAttributes'],
-                            'SmsVerificationMessage': 'Your authentication code is {####}',
-                            'EmailVerificationMessage': 'Your authentication code is {####}',
+                            'SmsVerificationMessage': _COGNITO_AUTH_CODE_MESSAGE,
+                            'EmailVerificationMessage': _COGNITO_AUTH_CODE_MESSAGE,
                             'EmailVerificationSubject': user_pool.get('EmailVerificationSubject', 'Your Verification Code'),
                             'VerificationMessageTemplate': {
-                                'SmsMessage': 'Your authentication code is {####}',
-                                'EmailMessage': 'Your authentication code is {####}',
+                                'SmsMessage': _COGNITO_AUTH_CODE_MESSAGE,
+                                'EmailMessage': _COGNITO_AUTH_CODE_MESSAGE,
                                 'EmailSubject': user_pool.get('EmailVerificationSubject', 'Your Verification Code'),
                                 'DefaultEmailOption': 'CONFIRM_WITH_CODE'
                             },
-                            'SmsAuthenticationMessage':'Your authentication code is {####}',
+                            'SmsAuthenticationMessage': _COGNITO_AUTH_CODE_MESSAGE,
                             'UserAttributeUpdateSettings': user_pool['UserAttributeUpdateSettings'],
                             'MfaConfiguration': user_pool['MfaConfiguration'],
                             'EmailConfiguration': user_pool.get('EmailConfiguration', {}),
@@ -2085,8 +2092,8 @@ class AwsDeleteAll:
                             'UserPoolAddOns': {'AdvancedSecurityMode': 'OFF'},
                             'AccountRecoverySetting': user_pool['AccountRecoverySetting'],
                                 }
-                        response = client.update_user_pool(**update_params)
-                    response = client.delete_user_pool(UserPoolId=user_pool['Id'])
+                        client.update_user_pool(**update_params)
+                    client.delete_user_pool(UserPoolId=user_pool['Id'])
                     logger.success(f"User pool ({user_pool['Id']}) deleted successfully.")
         except Exception as e:
             logger.error(f"Failed to update user pool: {e}")
