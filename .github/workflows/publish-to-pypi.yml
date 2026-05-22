@@ -1,25 +1,122 @@
 name: Publish to PyPI
 
+# How this works
+# ---------------
+# Pushes to main automatically bump the version in setup.py, tag the commit,
+# build the package, publish to PyPI via OIDC trusted publishing, and create
+# a GitHub Release.
+#
+# Bump type is controlled by the head commit message:
+#   - "[major]" anywhere in the message bumps MAJOR (X.0.0)
+#   - "[minor]" anywhere in the message bumps MINOR (x.X.0)
+#   - otherwise PATCH is bumped (default)
+#
+# Skip a release entirely with "[skip release]" in the commit message.
+# The bump commit itself contains "chore: bump version" and is filtered out
+# to prevent infinite loops (GITHUB_TOKEN-authored commits don't normally
+# re-trigger workflows, but we double-guard).
+#
+# `workflow_dispatch` lets you trigger manually and force a specific bump type.
+
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options: [patch, minor, major]
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build distribution
+  release:
+    name: Bump, build, publish
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        !contains(github.event.head_commit.message, '[skip release]') &&
+        !startsWith(github.event.head_commit.message, 'chore: bump version')
+      )
+    permissions:
+      contents: write   # push commit + tag, create release
+      id-token: write   # PyPI OIDC trusted publishing
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Determine bump type
+        id: bumptype
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BUMP="${{ inputs.bump }}"
+          else
+            MSG="${{ github.event.head_commit.message }}"
+            if echo "$MSG" | grep -qiE '\[major\]'; then
+              BUMP=major
+            elif echo "$MSG" | grep -qiE '\[minor\]'; then
+              BUMP=minor
+            else
+              BUMP=patch
+            fi
+          fi
+          echo "type=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "Bump type: $BUMP"
+
+      - name: Bump version in setup.py
+        id: bump
+        run: |
+          python <<'PY'
+          import os, re, pathlib
+          bump = os.environ["BUMP_TYPE"]
+          path = pathlib.Path("setup.py")
+          src = path.read_text(encoding="utf-8")
+          m = re.search(r"version\s*=\s*['\"]([^'\"]+)['\"]", src)
+          if not m:
+              raise SystemExit("Could not find version in setup.py")
+          old = m.group(1)
+          parts = [int(x) for x in old.split(".")]
+          while len(parts) < 3:
+              parts.append(0)
+          major, minor, patch = parts[0], parts[1], parts[2]
+          if bump == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif bump == "minor":
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+          new = f"{major}.{minor}.{patch}"
+          new_src = src[:m.start(1)] + new + src[m.end(1):]
+          path.write_text(new_src, encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"old={old}\n")
+              fh.write(f"new={new}\n")
+          print(f"Bumped {old} -> {new}")
+          PY
+        env:
+          BUMP_TYPE: ${{ steps.bumptype.outputs.type }}
+
+      - name: Commit, tag and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add setup.py
+          git commit -m "chore: bump version to v${{ steps.bump.outputs.new }} [skip ci]"
+          git tag -a "v${{ steps.bump.outputs.new }}" -m "v${{ steps.bump.outputs.new }}"
+          git push origin HEAD:main
+          git push origin "v${{ steps.bump.outputs.new }}"
 
       - name: Install build tooling
         run: |
@@ -29,27 +126,13 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build
 
-      - name: Upload distribution artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-
-  publish:
-    name: Publish to PyPI
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/aws-delete-all/
-    permissions:
-      id-token: write  # required for PyPI trusted publishing (OIDC)
-    steps:
-      - name: Download distribution artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.bump.outputs.new }}" dist/* \
+            --title "v${{ steps.bump.outputs.new }}" \
+            --notes "Automated release. Bumped from v${{ steps.bump.outputs.old }} to v${{ steps.bump.outputs.new }} (${{ steps.bumptype.outputs.type }})."
