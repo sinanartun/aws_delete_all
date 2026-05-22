@@ -2078,36 +2078,51 @@ class AwsDeleteAll:
     def _disable_user_pool_deletion_protection(client, user_pool):
         """Disable a user pool's DeletionProtection without echoing optional fields back.
 
-        ``update_user_pool`` accepts every parameter as optional, but if a field is
-        present in the request boto3 validates it. Pools without an SMS sender or
-        without UserAttributeUpdateSettings raise KeyError when we copy them
-        verbatim from describe_user_pool. The minimal flip is what we want.
+        ``update_user_pool`` accepts every parameter as optional, but if a field
+        is present in the request boto3 / Cognito validates it. EmailConfiguration
+        and SmsConfiguration reference external SES identities and SNS caller
+        ARNs that may have been deleted already, so re-sending them causes
+        InvalidParameterException. We deliberately omit those fields.
         """
         params = {
             'UserPoolId': user_pool['Id'],
             'DeletionProtection': 'INACTIVE',
         }
-        # Preserve fields only when describe_user_pool returned them.
+        # Preserve only safe fields. Anything that points at external
+        # resources (SES identities, SNS caller ARNs, Lambda ARNs) is dropped
+        # because the targets may already be gone, which would make
+        # update_user_pool fail. Defaults are fine since we delete next.
         for key in (
             'AutoVerifiedAttributes',
             'MfaConfiguration',
             'AccountRecoverySetting',
             'UserPoolTags',
-            'EmailConfiguration',
-            'LambdaConfig',
             'UserAttributeUpdateSettings',
             'UserPoolAddOns',
             'AdminCreateUserConfig',
             'Policies',
-            'VerificationMessageTemplate',
-            'SmsAuthenticationMessage',
-            'SmsVerificationMessage',
-            'EmailVerificationMessage',
-            'EmailVerificationSubject',
         ):
             if key in user_pool:
                 params[key] = user_pool[key]
-        client.update_user_pool(**params)
+
+        try:
+            client.update_user_pool(**params)
+            return
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code != 'InvalidParameterException':
+                raise
+            logger.warning(
+                f"User pool {user_pool['Id']}: update with preserved fields failed ({e}); "
+                f"retrying with minimal payload."
+            )
+
+        # Final fallback: only flip the protection flag. If even this fails,
+        # bubble the error up so the caller logs and skips the pool.
+        client.update_user_pool(
+            UserPoolId=user_pool['Id'],
+            DeletionProtection='INACTIVE',
+        )
 
 
     def delete_cognito_identity_pools(self, region_name: str):
