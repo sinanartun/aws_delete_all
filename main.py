@@ -7,6 +7,7 @@ from datetime import datetime
 import boto3
 import botocore
 import urllib.request
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.exceptions import WaiterError
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
@@ -543,30 +544,80 @@ class AwsDeleteAll:
         logger.success("All Step Functions state machines have been deleted.")
 
     def delete_cloudfront_distributions(self, region_name):
-        client = boto3.client('cloudfront', region_name=region_name)
+        # CloudFront is a global service, only operate from us-east-1 to avoid duplicate work across region threads
+        if region_name != 'us-east-1':
+            return
 
-        # List all distributions
-        distributions = client.list_distributions()
+        client = boto3.client('cloudfront', region_name='us-east-1')
 
-        if distributions['DistributionList']['Quantity'] > 0:
-            logger.warning(f"CloudFront Distributions Found: count({distributions['DistributionList']['Quantity']})")
-            for distribution in distributions['DistributionList']['Items']:
-                # Get distribution config
-                config = client.get_distribution_config(Id=distribution['Id'])
+        # List all distributions (paginated)
+        distribution_ids = []
+        try:
+            paginator = client.get_paginator('list_distributions')
+            for page in paginator.paginate():
+                items = page.get('DistributionList', {}).get('Items') or []
+                for d in items:
+                    distribution_ids.append(d['Id'])
+        except ClientError as e:
+            logger.error(f"Failed to list CloudFront distributions: {e}")
+            return
 
-                # Create a new config without the ETag element
-                new_config = {key: value for key, value in config.items() if key != 'ETag'}
+        if not distribution_ids:
+            return
 
-                # Disable the distribution
-                new_config['DistributionConfig']['Enabled'] = False
+        logger.warning(f"CloudFront Distributions Found: count({len(distribution_ids)})")
 
-                # Update the distribution
-                client.update_distribution(Id=distribution['Id'], IfMatch=config['ETag'], DistributionConfig=new_config)
+        for dist_id in distribution_ids:
+            try:
+                # 1. Get the current distribution config (response wraps it under 'DistributionConfig' and includes 'ETag')
+                response = client.get_distribution_config(Id=dist_id)
+                etag = response['ETag']
+                new_config = response['DistributionConfig']
 
-                # Delete the distribution
-                client.delete_distribution(Id=distribution['Id'], IfMatch=config['ETag'])
+                if new_config.get('Enabled', False):
+                    # 2. Disable the distribution
+                    new_config['Enabled'] = False
+                    client.update_distribution(
+                        Id=dist_id,
+                        IfMatch=etag,
+                        DistributionConfig=new_config,
+                    )
+                    logger.info(f"Disabled CloudFront distribution {dist_id}, waiting for deployment...")
 
-            logger.success("All CloudFront distributions have been deleted.")
+                    # 3. Wait for the distribution to reach 'Deployed' state before delete
+                    try:
+                        waiter = client.get_waiter('distribution_deployed')
+                        waiter.wait(
+                            Id=dist_id,
+                            WaiterConfig={'Delay': 30, 'MaxAttempts': 60},
+                        )
+                    except WaiterError as we:
+                        logger.error(f"Timed out waiting for CloudFront distribution {dist_id} to deploy: {we}")
+                        continue
+
+                # 4. Re-fetch the latest ETag (it changes after update / on disabled distributions)
+                latest = client.get_distribution_config(Id=dist_id)
+                latest_etag = latest['ETag']
+
+                # 5. Delete the distribution
+                client.delete_distribution(Id=dist_id, IfMatch=latest_etag)
+                logger.success(f"Deleted CloudFront distribution {dist_id}")
+
+            except ClientError as e:
+                code = e.response.get('Error', {}).get('Code', '')
+                if code == 'NoSuchDistribution':
+                    logger.warning(f"CloudFront distribution {dist_id} not found, may already be deleted.")
+                elif code == 'DistributionNotDisabled':
+                    logger.error(f"CloudFront distribution {dist_id} is not yet disabled, will be retried on next run.")
+                elif code in ('Throttling', 'ThrottlingException', 'TooManyRequestsException'):
+                    logger.warning(f"Throttled while deleting CloudFront distribution {dist_id}, sleeping 5s.")
+                    time.sleep(5)
+                else:
+                    logger.error(f"Error deleting CloudFront distribution {dist_id}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error deleting CloudFront distribution {dist_id}: {e}")
+
+        logger.success("CloudFront distribution cleanup pass complete.")
 
     def delete_eventbridge_rules(self, region_name):
         events = boto3.client('events', region_name=region_name)
@@ -646,25 +697,46 @@ class AwsDeleteAll:
 
 
     def delete_rest_apis(self, region_name):
-        client = boto3.client('apigateway', region_name=region_name)
+        # APIGateway has very low default rate limits (~5 RPS), use adaptive retry mode
+        config = Config(retries={'max_attempts': 10, 'mode': 'adaptive'})
+        client = boto3.client('apigateway', region_name=region_name, config=config)
 
-        apis = client.get_rest_apis()['items']
+        try:
+            apis = client.get_rest_apis()['items']
+        except ClientError as e:
+            logger.error(f"Failed to list REST APIs in {region_name}: {e}")
+            return
 
         if not apis:
             return
         logger.warning(f"Api Gateway REST APIs Found: count({len(apis)})")
         for api in apis:
             api_id = api['id']
-            api_name = api['name']
+            api_name = api.get('name', '<unnamed>')
 
-            try:
-                client.delete_rest_api(restApiId=api_id)
-                logger.info(f"Successfully deleted API:{region_name}=> {api_name} ({api_id})")
-
-            except client.exceptions.ResourceNotFoundException:
-                logger.warning(f"API {api_name} ({api_id}) not found. It might have been already deleted.")
-            except Exception as e:
-                logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
+            # Manual exponential backoff in addition to adaptive retries to be safe against TooManyRequestsException
+            for attempt in range(self.max_retries):
+                try:
+                    client.delete_rest_api(restApiId=api_id)
+                    logger.info(f"Successfully deleted API:{region_name}=> {api_name} ({api_id})")
+                    # APIGateway requires ~30s between successive delete_rest_api calls in some accounts
+                    time.sleep(30)
+                    break
+                except client.exceptions.NotFoundException:
+                    logger.warning(f"API {api_name} ({api_id}) not found. It might have been already deleted.")
+                    break
+                except client.exceptions.TooManyRequestsException as e:
+                    backoff = min(60, (2 ** attempt))
+                    logger.warning(
+                        f"Throttled deleting API {api_name} ({api_id}), retry {attempt + 1}/{self.max_retries} in {backoff}s"
+                    )
+                    time.sleep(backoff)
+                except ClientError as e:
+                    logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
+                    break
+                except Exception as e:
+                    logger.error(f"Error deleting API {api_name} ({api_id}): {e}")
+                    break
 
 
 

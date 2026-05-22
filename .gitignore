@@ -1,7 +1,77 @@
-.idea
-venv
-dist/*
-build/*
-aws_delete_all.egg-info
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# --- Build / packaging artifacts ---
+build/
+dist/
+*.egg
+*.egg-info/
+aws_delete_all.egg-info/
+pip-wheel-metadata/
+.eggs/
+MANIFEST
+
+# --- Test / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.cache/
+
+# --- Type checkers / linters ---
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS ---
 .DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+ehthumbs.db
+
+# --- Secrets / credentials (AWS-sensitive project) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+.aws/
+aws-credentials*
+credentials.json
+
+# --- Logs / local output ---
+*.log
+logs/
+res.txt
+
+# --- Local scratch ---
 test.py
+scratch/
+tmp/

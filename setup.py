@@ -21,9 +21,9 @@ setup(
     ],
     python_requires='>=3.9',
     install_requires=[
-        'boto3>=1.35.74',
-        'loguru',
-        'pip>=24.1.1'
+        'boto3>=1.42.0,<2.0.0',
+        'botocore>=1.42.0,<2.0.0',
+        'loguru>=0.7.2,<1.0.0',
     ],
     entry_points={
         'console_scripts': [
